@@ -1,0 +1,16 @@
+{
+  "name": "Gastos",
+  "db": {
+    "host": "localhost",
+    "user": "gastos",
+    "pass": "sQo61$y7",
+    "name": "gastos"
+  },
+  "cookies": {
+    "prefix": "gst",
+    "url": "gst.osumi.es."
+  },
+  "base_url": "https://apigastos.osumi.es",
+  "lang": "es",
+  "log_level": "ERROR"
+}
