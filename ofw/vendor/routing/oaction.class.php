@@ -1,23 +1,28 @@
 <?php declare(strict_types=1);
 
-namespace OsumiFramework\OFW\Core;
+namespace OsumiFramework\OFW\Routing;
 
+use OsumiFramework\OFW\Routing\OModuleAction;
+use OsumiFramework\OFW\Core\OConfig;
+use OsumiFramework\OFW\Core\OTemplate;
 use OsumiFramework\OFW\DB\ODB;
 use OsumiFramework\OFW\Log\OLog;
 use OsumiFramework\OFW\Web\OSession;
 use OsumiFramework\OFW\Web\OCookie;
 use OsumiFramework\OFW\Cache\OCacheContainer;
+use OsumiFramework\OFW\Tools\OTools;
 
 /**
- * OModule - Base class for the module classes providing access to the framework configuration, database, template, logs, session or cookies
+ * OAction - Base class for the module actions providing access to the framework configuration, database, template, logs, session or cookies
  */
-class OModule {
-	protected ?OConfig         $config   = null;
-	protected ?ODB             $db       = null;
-	protected ?OTemplate       $template = null;
-	protected ?OLog            $log      = null;
-	protected ?OSession        $session  = null;
-	protected ?OCookie         $cookie   = null;
+class OAction {
+	protected ?OModuleAction   $attributes = null;
+	protected ?OConfig         $config     = null;
+	protected ?ODB             $db         = null;
+	protected ?OTemplate       $template   = null;
+	protected ?OLog            $log        = null;
+	protected ?OSession        $session    = null;
+	protected ?OCookie         $cookie     = null;
 	protected ?OCacheContainer $cacheContainer = null;
 
 	/**
@@ -25,13 +30,16 @@ class OModule {
 	 *
 	 * @param array $url_result Configuration array as in urls.json
 	 *
+	 * @param OModuleAction $attributes Action attributes
+	 *
 	 * @return void
 	 */
-	public final function loadModule(array $url_result): void {
+	public final function loadAction(array $url_result, OModuleAction $attributes): void {
 		global $core;
 
-		$this->config   = $core->config;
-		$this->session  = $core->session;
+		$this->attributes = $attributes;
+		$this->config     = $core->config;
+		$this->session    = $core->session;
 		$this->cacheContainer = $core->cacheContainer;
 		if (!is_null($core->dbContainer)) {
 			$this->db = new ODB();
@@ -51,6 +59,37 @@ class OModule {
 		$this->template->setAction($url_result['action']);
 		$this->template->setType($url_result['type']);
 		$this->template->loadLayout($url_result['layout']);
+
+		// Load action's required services
+		foreach ($this->attributes->getServices() as $item) {
+			OTools::loadService($item);
+			$service_name = "\\OsumiFramework\\App\\Service\\".$item.'Service';
+			$service = new $service_name;
+			$service->loadService();
+			$this->{$item.'_service'} = $service;
+		}
+
+		// Load action's required components
+		OTools::loadComponents($this->attributes->getComponents());
+
+		// Load action's CSS and JS files
+		foreach ($this->attributes->getInlineCss() as $item) {
+			$css_file = $this->config->getDir('app_module').$url_result['module'].'/actions/'.$url_result['action'].'/'.$item.'.css';
+			$this->template->addCss($css_file, true);
+		}
+
+		foreach ($this->attributes->getCss() as $item) {
+			$this->template->addCss($item);
+		}
+
+		foreach ($this->attributes->getInlineJs() as $item) {
+			$js_file = $this->config->getDir('app_module').$url_result['module'].'/actions/'.$url_result['action'].'/'.$item.'.js';
+			$this->template->addJs($js_file, true);
+		}
+
+		foreach ($this->attributes->getJs() as $item) {
+			$this->template->addJs($item);
+		}
 	}
 
 	/**
