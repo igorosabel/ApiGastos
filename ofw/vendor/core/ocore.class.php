@@ -39,10 +39,10 @@ class OCore {
 	 * @return void
 	 */
 	public function load(bool $from_cli=false): void {
-		session_start();
 		date_default_timezone_set('Europe/Madrid');
 
 		$basedir = realpath(dirname(__FILE__));
+		$basedir = str_ireplace("\\", '/', $basedir);
 		$basedir = str_ireplace('ofw/vendor/core', '', $basedir);
 
 		require $basedir.'ofw/vendor/core/oconfig.class.php';
@@ -72,6 +72,7 @@ class OCore {
 		require $this->config->getDir('ofw_vendor').'routing/ourl.class.php';
 		require $this->config->getDir('ofw_vendor').'tools/oform.class.php';
 		require $this->config->getDir('ofw_vendor').'tools/otools.class.php';
+		require $this->config->getDir('ofw_vendor').'tools/ocolors.class.php';
 
 		// Due to a circular dependancy, check name of the log file after core loading
 		if (is_null($this->config->getLog('name'))) {
@@ -122,7 +123,6 @@ class OCore {
 			$this->session  = new OSession();
 		}
 		else {
-			require $this->config->getDir('ofw_vendor').'tools/ocolors.class.php';
 			require $this->config->getDir('ofw_vendor').'core/oupdate.class.php';
 		}
 
@@ -156,7 +156,7 @@ class OCore {
 		}
 
 		// Database model classes
-		if (file_exists($this->config->getDir('app_model'))) {
+		if (file_exists($this->config->getDir('app_model')) && !is_null($this->dbContainer)) {
 			if ($model = opendir($this->config->getDir('app_model'))) {
 				while (false !== ($entry = readdir($model))) {
 					if ($entry != '.' && $entry != '..') {
@@ -183,6 +183,11 @@ class OCore {
 	 * @return void
 	 */
 	public function run(): void {
+		// Check if session is to be used
+		if ($this->config->getUseSession()) {
+			session_start();
+		}
+
 		if ($this->config->getAllowCrossOrigin()) {
 			header('Access-Control-Allow-Origin: *');
 			header('Access-Control-Allow-Headers: Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -372,7 +377,7 @@ class OCore {
 	 * @return string Name of the DTO file used in the action or null if there is no DTO.
 	 */
 	public function getContentDTO(string $content): ?string {
-		preg_match("/^\s?use OsumiFramework\\\App\\\DTO\\\(.*?);$/m", $content, $match);
+		preg_match("/use OsumiFramework\\\App\\\DTO\\\(.*?);/m", $content, $match);
 		if (!is_null($match) && count($match) > 1) {
 			return OTools::toSnakeCase(str_ireplace("DTO", "", $match[1]));
 		}
@@ -516,18 +521,16 @@ class OCore {
 	public function errorHandler(\Throwable $ex): void {
 		$log = new OLog(get_class($this));
 		$params = ['message' => OTools::getMessage('ERROR_500_LABEL')];
-		if ($this->config->getEnvironment()!='prod') {
-			$params['message'] = "<strong>Error:</strong> \"".$ex->getMessage()."\"\n<strong>File:</strong> \"".$ex->getFile()."\" (Line: ".$ex->getLine().")\n\n<strong>Trace:</strong> \n";
-			foreach ($ex->getTrace() as $trace) {
-				if (array_key_exists('file', $trace)) {
-					$params['message'] .= "  <strong>File:</strong> \"".$trace['file']." (Line: ".$trace['line'].")\"\n";
-				}
-				if (array_key_exists('class', $trace)) {
-					$params['message'] .= "  <strong>Class:</strong> \"".$trace['class']."\"\n";
-				}
-				if (array_key_exists('function', $trace)) {
-					$params['message'] .= "  <strong>Function:</strong> \"".$trace['function']."\"\n\n";
-				}
+		$params['message'] = "<strong>Error:</strong> \"".$ex->getMessage()."\"\n<strong>File:</strong> \"".$ex->getFile()."\" (Line: ".$ex->getLine().")\n\n<strong>Trace:</strong> \n";
+		foreach ($ex->getTrace() as $trace) {
+			if (array_key_exists('file', $trace)) {
+				$params['message'] .= "  <strong>File:</strong> \"".$trace['file']." (Line: ".$trace['line'].")\"\n";
+			}
+			if (array_key_exists('class', $trace)) {
+				$params['message'] .= "  <strong>Class:</strong> \"".$trace['class']."\"\n";
+			}
+			if (array_key_exists('function', $trace)) {
+				$params['message'] .= "  <strong>Function:</strong> \"".$trace['function']."\"\n\n";
 			}
 		}
 		$log->error( str_ireplace('</strong>', '', str_ireplace('<strong>', '', $params['message'])) );
