@@ -8,12 +8,11 @@ use Osumi\OsumiFramework\Routing\OUrl;
 
 class IndexComponent extends OComponent {
 	/**
-	 * Home pública
+	 * Raíz del sitio, redirige al usuario a la aplicación
 	 *
-	 * @param ORequest $req Request object with method, headers, parameters and filters used
 	 * @return void
 	 */
-	public function run(ORequest $req): void {
+	public function run(): void {
 		OUrl::goToUrl('https://gastos.osumi.es');
 	}
 }
