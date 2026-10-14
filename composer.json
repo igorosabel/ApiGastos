@@ -21,7 +21,9 @@
     }
   },
   "scripts": {
-    "test": "phpunit"
+    "test": "phpunit --testsuite Unit",
+    "test:integration": "phpunit --testsuite Integration",
+    "test:all": "phpunit"
   },
   "config": {
     "preferred-install": "dist",
