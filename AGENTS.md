@@ -34,3 +34,11 @@ API REST de Gastos desarrollada con Osumi Framework.
 - Definir pruebas para cada funcionalidad.
 - No continuar al siguiente bloque sin validar el actual.
 - Ante cualquier duda preguntar antes de inventar nada.
+- Cada mensaje tiene que corresponder con una unidad lógica, suficientemente pequeña y auto-contenida.
+- No hace falta manejar un archivo por mensaje ni 20 archivos, hay que buscar un equilibrio.
+
+## Código
+- Hay que usar tipado estricto en todo el desarrollo.
+- Todos los métodos tienen que tener PHPDoc.
+- Hay que crear tests unitarios a lo largo de todo el desarrollo.
+- No hay que añadir saltos de línea innecesarios, tienen que ser para separar bloques lógicos.
