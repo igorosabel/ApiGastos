@@ -1,0 +1,28 @@
+{
+	"db": {
+		"host": "host",
+		"user": "user",
+		"pass": "pass",
+		"name": "name"
+	},
+	"cookies": {
+		"prefix": "",
+		"url": ""
+	},
+	"log_level": "ERROR",
+	"base_url": "https://gastos.osumi.es/",
+	"admin_email": "",
+	"default_title": "Gastos",
+	"lang": "es",
+	"smtp": {
+		"host": "host",
+		"port": 587,
+		"secure": "tls",
+		"user": "user@email.com",
+		"pass": "password"
+	},
+	"extra": {
+		"key": "value",
+		"foo": "bar"
+	}
+}
