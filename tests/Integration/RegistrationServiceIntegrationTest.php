@@ -184,6 +184,105 @@ final class RegistrationServiceIntegrationTest extends TestCase {
     }
 
     /**
+     * Comprueba que un fallo en la membresía revierte el usuario y el espacio.
+     */
+    public function testRollbackWhenMembershipCreationFails(): void {
+        $dsn = getenv('GASTOS_TEST_DSN');
+        $user = getenv('GASTOS_TEST_USER');
+        $password = getenv('GASTOS_TEST_PASSWORD');
+
+        if (!is_string($dsn) || !is_string($user) || !is_string($password)) {
+            throw new RuntimeException('Falta configurar la conexión de pruebas.');
+        }
+
+        $db = new class($dsn, $user, $password, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_EMULATE_PREPARES => false
+        ]) extends PDO {
+            public ?int $created_user_id = null;
+            public ?int $created_space_id = null;
+
+            /**
+             * Simula un fallo al preparar la inserción de la membresía.
+             *
+             * @param array<int, mixed> $options Opciones de preparación.
+             */
+            public function prepare(
+                string $query,
+                array $options = []
+            ): PDOStatement|false {
+                if (str_contains($query, 'INSERT INTO `space_member`')) {
+                    $this->created_space_id = (int) $this->lastInsertId();
+
+                    $stmt = parent::prepare(
+                        'SELECT owner_id FROM space WHERE id = ?'
+                    );
+                    $stmt->execute([$this->created_space_id]);
+                    $this->created_user_id = (int) $stmt->fetchColumn();
+
+                    throw new PDOException(
+                        'Fallo simulado en la creación de la membresía.'
+                    );
+                }
+
+                return parent::prepare($query, $options);
+            }
+        };
+
+        $this->assertSame(
+            'gastos_test',
+            $db->query('SELECT DATABASE()')->fetchColumn()
+        );
+
+        $email = $this->uniqueEmail();
+        $service = new RegistrationService($db);
+
+        try {
+            $service->register(
+                'Usuario rollback',
+                $email,
+                'contraseña de prueba segura'
+            );
+
+            $this->fail(
+                'El registro debería haber fallado.'
+            );
+        }
+        catch (PDOException $e) {
+            $this->assertSame(
+                'Fallo simulado en la creación de la membresía.',
+                $e->getMessage()
+            );
+        }
+
+        $this->assertNotNull($db->created_user_id);
+        $this->assertNotNull($db->created_space_id);
+        $this->assertFalse($db->inTransaction());
+
+        $stmt = $this->db->prepare(
+            'SELECT COUNT(*) FROM user WHERE id = ?'
+        );
+        $stmt->execute([$db->created_user_id]);
+        $this->assertSame(0, (int) $stmt->fetchColumn());
+
+        $stmt = $this->db->prepare(
+            'SELECT COUNT(*) FROM space WHERE id = ?'
+        );
+        $stmt->execute([$db->created_space_id]);
+        $this->assertSame(0, (int) $stmt->fetchColumn());
+
+        $stmt = $this->db->prepare(
+            'SELECT COUNT(*) FROM space_member
+             WHERE id_space = ? AND id_user = ?'
+        );
+        $stmt->execute([
+            $db->created_space_id,
+            $db->created_user_id
+        ]);
+        $this->assertSame(0, (int) $stmt->fetchColumn());
+    }
+
+    /**
      * Genera un correo exclusivo para cada ejecución.
      */
     private function uniqueEmail(): string {
