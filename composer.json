@@ -1,6 +1,6 @@
 {
-  "name": "osumionline/new",
-  "description": "Aplicación esqueleto basada en Osumi Framework.",
+  "name": "igorosabel/apigastos",
+  "description": "API para la gestión de gastos e ingresos personales y compartidos.",
   "type": "project",
   "keywords": ["osumi", "framework", "skeleton"],
   "homepage": "https://github.com/osumionline/new",
@@ -13,7 +13,7 @@
     }
   ],
   "require": {
-    "php": ">=8.2",
+    "php": ">=8.5",
     "osumionline/framework": "^9.12.1",
     "osumionline/plugin-token": "^3.0"
   },

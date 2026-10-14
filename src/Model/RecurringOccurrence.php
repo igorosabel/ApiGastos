@@ -114,6 +114,4 @@ class RecurringOccurrence extends OModel {
 		comment: ''
 	)]
 	public ?string $updated_at;
-
-
 }
