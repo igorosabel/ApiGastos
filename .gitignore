@@ -1,3 +1,4 @@
 /vendor/
 /ofw/
 /src/Config/Config.json
+/.phpunit.cache/
