@@ -1,4 +1,3 @@
 /vendor/
 /ofw/
-/composer.lock
 /src/Config/Config.json

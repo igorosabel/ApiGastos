@@ -1,0 +1,152 @@
+{
+    "_readme": [
+        "This file locks the dependencies of your project to a known state",
+        "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
+        "This file is @generated automatically"
+    ],
+    "content-hash": "a85ed0bda71dde1f2f1dd4a8bd1171e3",
+    "packages": [
+        {
+            "name": "osumionline/framework",
+            "version": "9.12.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/osumionline/framework.git",
+                "reference": "d86244adb0f8ea51a67a82e525439997ba9bf91a"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/osumionline/framework/zipball/d86244adb0f8ea51a67a82e525439997ba9bf91a",
+                "reference": "d86244adb0f8ea51a67a82e525439997ba9bf91a",
+                "shasum": ""
+            },
+            "require": {
+                "ext-json": "*",
+                "osumionline/plugin-updater": "^1.0",
+                "php": ">=8.5"
+            },
+            "require-dev": {
+                "phpunit/phpunit": "^13.4"
+            },
+            "bin": [
+                "bin/ofw-migrate"
+            ],
+            "type": "library",
+            "extra": {
+                "version-description": "Soporte para CURRENT_TIMESTAMP como valor por defecto de campos DATETIME."
+            },
+            "autoload": {
+                "psr-4": {
+                    "Osumi\\OsumiFramework\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Iñigo Gorosabel",
+                    "homepage": "https://osumi.es",
+                    "role": "Developer"
+                }
+            ],
+            "description": "Framework PHP de Osumi para aplicaciones web.",
+            "homepage": "https://github.com/osumionline/framework",
+            "keywords": [
+                "framework",
+                "osumi",
+                "php",
+                "web"
+            ],
+            "support": {
+                "issues": "https://github.com/osumionline/framework/issues",
+                "source": "https://github.com/osumionline/framework/tree/v9.12.1"
+            },
+            "time": "2026-10-14T15:49:35+00:00"
+        },
+        {
+            "name": "osumionline/plugin-token",
+            "version": "3.0.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/osumionline/plugin-token.git",
+                "reference": "dcc3511b01cf05258a923c5a9b331cf6bc813cde"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/osumionline/plugin-token/zipball/dcc3511b01cf05258a923c5a9b331cf6bc813cde",
+                "reference": "dcc3511b01cf05258a923c5a9b331cf6bc813cde",
+                "shasum": ""
+            },
+            "require": {
+                "php": ">=8.2"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Osumi\\OsumiFramework\\Plugins\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "description": "Plugin OToken para Osumi Framework",
+            "support": {
+                "issues": "https://github.com/osumionline/plugin-token/issues",
+                "source": "https://github.com/osumionline/plugin-token/tree/v3.0.0"
+            },
+            "time": "2024-09-05T07:18:40+00:00"
+        },
+        {
+            "name": "osumionline/plugin-updater",
+            "version": "1.0.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/osumionline/plugin-updater.git",
+                "reference": "1fbd12ed1b395c669ffa9d48a9e8393e5a3605ca"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/osumionline/plugin-updater/zipball/1fbd12ed1b395c669ffa9d48a9e8393e5a3605ca",
+                "reference": "1fbd12ed1b395c669ffa9d48a9e8393e5a3605ca",
+                "shasum": ""
+            },
+            "require": {
+                "composer-plugin-api": "^2.0",
+                "php": ">=8.5"
+            },
+            "type": "composer-plugin",
+            "extra": {
+                "class": "Osumi\\OsumiFramework\\Plugins\\OUpdater"
+            },
+            "autoload": {
+                "psr-4": {
+                    "Osumi\\OsumiFramework\\Plugins\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "description": "Osumi Framework Composer plugin to run core migrations after framework updates.",
+            "support": {
+                "issues": "https://github.com/osumionline/plugin-updater/issues",
+                "source": "https://github.com/osumionline/plugin-updater/tree/v1.0.1"
+            },
+            "time": "2026-10-01T12:03:12+00:00"
+        }
+    ],
+    "packages-dev": [],
+    "aliases": [],
+    "minimum-stability": "stable",
+    "stability-flags": {},
+    "prefer-stable": true,
+    "prefer-lowest": false,
+    "platform": {
+        "php": ">=8.5"
+    },
+    "platform-dev": {},
+    "plugin-api-version": "2.9.0"
+}

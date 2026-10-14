@@ -2,8 +2,6 @@
   "name": "igorosabel/apigastos",
   "description": "API para la gestión de gastos e ingresos personales y compartidos.",
   "type": "project",
-  "keywords": ["osumi", "framework", "skeleton"],
-  "homepage": "https://github.com/osumionline/new",
   "license": "MIT",
   "authors": [
     {

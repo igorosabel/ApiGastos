@@ -10,7 +10,7 @@
 		"url": ""
 	},
 	"log_level": "ERROR",
-	"base_url": "https://gastos.osumi.es/",
+	"base_url": "https://apigastos.osumi.es/",
 	"admin_email": "",
 	"default_title": "Gastos",
 	"lang": "es",
