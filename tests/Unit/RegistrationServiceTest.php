@@ -1,6 +1,7 @@
 <?php declare(strict_types=1);
 
 use Osumi\OsumiFramework\App\Service\Auth\RegistrationService;
+use Osumi\OsumiFramework\App\Service\Auth\EmailAlreadyRegisteredException;
 use PHPUnit\Framework\TestCase;
 
 final class RegistrationServiceTest extends TestCase {
@@ -102,6 +103,84 @@ final class RegistrationServiceTest extends TestCase {
             ->willThrowException(
                 new PDOException('Error simulado')
             );
+
+        $db->expects($this->once())
+            ->method('rollBack')
+            ->willReturn(true);
+
+        $db->expects($this->never())
+            ->method('commit');
+
+        $service = new RegistrationService($db);
+
+        $this->expectException(PDOException::class);
+
+        $service->register(
+            'Iñigo',
+            'test@example.com',
+            'una contraseña larga'
+        );
+    }
+
+    /**
+     * Comprueba que un correo duplicado genera una excepción de negocio.
+     */
+    public function testDuplicateEmail(): void {
+        $db = $this->createMock(PDO::class);
+        $stmt = $this->createStub(PDOStatement::class);
+
+        $error = new PDOException('Duplicate entry', 23000);
+        $error->errorInfo = [
+            '23000',
+            1062,
+            "Duplicate entry 'test@example.com' for key 'uq_user_email'"
+        ];
+
+        $db->method('beginTransaction')->willReturn(true);
+        $db->method('inTransaction')->willReturn(true);
+        $db->method('prepare')->willReturn($stmt);
+
+        $stmt->method('execute')->willThrowException($error);
+
+        $db->expects($this->once())
+            ->method('rollBack')
+            ->willReturn(true);
+
+        $db->expects($this->never())
+            ->method('commit');
+
+        $service = new RegistrationService($db);
+
+        $this->expectException(
+            EmailAlreadyRegisteredException::class
+        );
+
+        $service->register(
+            'Iñigo',
+            'test@example.com',
+            'una contraseña larga'
+        );
+    }
+
+    /**
+     * Comprueba que otros errores SQL conservan su excepción original.
+     */
+    public function testUnrelatedDatabaseError(): void {
+        $db = $this->createMock(PDO::class);
+        $stmt = $this->createStub(PDOStatement::class);
+
+        $error = new PDOException('Error SQL', 23000);
+        $error->errorInfo = [
+            '23000',
+            1452,
+            'Foreign key constraint fails'
+        ];
+
+        $db->method('beginTransaction')->willReturn(true);
+        $db->method('inTransaction')->willReturn(true);
+        $db->method('prepare')->willReturn($stmt);
+
+        $stmt->method('execute')->willThrowException($error);
 
         $db->expects($this->once())
             ->method('rollBack')

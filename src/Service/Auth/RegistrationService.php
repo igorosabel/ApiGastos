@@ -5,6 +5,7 @@ namespace Osumi\OsumiFramework\App\Service\Auth;
 use Osumi\OsumiFramework\Core\OService;
 use Osumi\OsumiFramework\ORM\ODB;
 use PDO;
+use PDOException;
 use RuntimeException;
 use Throwable;
 
@@ -115,6 +116,21 @@ final class RegistrationService extends OService {
         catch (Throwable $e) {
             if ($this->db->inTransaction()) {
                 $this->db->rollBack();
+            }
+
+            if (
+                $e instanceof PDOException &&
+                ($e->errorInfo[1] ?? null) === 1062 &&
+                str_contains(
+                    (string) ($e->errorInfo[2] ?? ''),
+                    'uq_user_email'
+                )
+            ) {
+                throw new EmailAlreadyRegisteredException(
+                    'Ya existe una cuenta con ese correo electrónico.',
+                    0,
+                    $e
+                );
             }
 
             throw $e;
