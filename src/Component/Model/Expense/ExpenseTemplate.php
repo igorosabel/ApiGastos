@@ -12,6 +12,6 @@ null
 	"category": <?php echo is_null($expense->id_category) ? 'null' : new CategoryComponent(['category' => $expense->getCategory(), 'more' => false]) ?>,
 	"concept": {{ expense.concept | string }},
 	"amount": {{ expense.amount }},
-	"createdAt": {{ expense.created_at | date }}
+	"inputAt": {{ expense.input_at | date }}
 }
 <?php endif ?>
