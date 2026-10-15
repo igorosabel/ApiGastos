@@ -2,6 +2,7 @@
 
 namespace Osumi\OsumiFramework\App\Module\Space\GetSpaces;
 
+use Osumi\OsumiFramework\App\Component\Model\SpaceList\SpaceListComponent;
 use Osumi\OsumiFramework\App\Service\Space\SpaceService;
 use Osumi\OsumiFramework\Core\OComponent;
 use Osumi\OsumiFramework\Core\OMiddleware;
@@ -11,21 +12,21 @@ class GetSpacesComponent extends OComponent {
     private SpaceService $space_service;
 
     public bool $success = false;
-    public string $spaces_json = '[]';
+    public ?SpaceListComponent $list = null;
 
     /**
-     * Inicializa el servicio de espacios mediante OFW.
+     * Inicializa el servicio y el componente de listado.
      */
     public function __construct() {
         parent::__construct();
         $this->space_service = inject(SpaceService::class);
+        $this->list = new SpaceListComponent();
     }
 
     /**
-     * Devuelve los espacios del usuario autenticado.
+     * Obtiene los espacios del usuario autenticado.
      *
      * @param ORequest $req Petición HTTP.
-     * @return void
      */
     public function run(ORequest $req): void {
         $user_id = $req->getMiddlewareValue('Login', 'id');
@@ -35,12 +36,8 @@ class GetSpacesComponent extends OComponent {
             return;
         }
 
-        $spaces = $this->space_service->getUserSpaces($user_id);
-
-        $this->spaces_json = json_encode(
-            $spaces,
-            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE
-        );
+        $this->list->list = $this->space_service->getUserSpaces($user_id);
+        $this->list->user_id = $user_id;
         $this->success = true;
     }
 }

@@ -1,0 +1,7 @@
+{
+    "id": {{ space.id | number }},
+    "name": {{ space.name | plain }},
+    "type": {{ space.type | plain }},
+    "owner_id": {{ space.owner_id | number }},
+    "is_owner": {{ is_owner | bool }}
+}

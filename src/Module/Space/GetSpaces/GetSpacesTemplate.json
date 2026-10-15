@@ -1,4 +1,4 @@
 {
     "success": {{ success | bool }},
-    "spaces": {{ spaces_json }}
+    "spaces": [{{ list }}]
 }

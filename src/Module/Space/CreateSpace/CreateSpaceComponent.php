@@ -3,25 +3,22 @@
 namespace Osumi\OsumiFramework\App\Module\Space\CreateSpace;
 
 use InvalidArgumentException;
+use Osumi\OsumiFramework\App\Component\Model\Space\SpaceComponent;
+use Osumi\OsumiFramework\App\DTO\CreateSpaceDTO;
 use Osumi\OsumiFramework\App\Service\Space\SpaceService;
 use Osumi\OsumiFramework\Core\OComponent;
 use Osumi\OsumiFramework\Core\OMiddleware;
-use Osumi\OsumiFramework\Web\ORequest;
 
 class CreateSpaceComponent extends OComponent {
     private SpaceService $space_service;
 
     public bool $success = false;
-    public ?int $id = null;
-    public ?string $name = null;
-    public ?string $type = null;
-    public ?int $owner_id = null;
-    public bool $is_owner = false;
+    public ?SpaceComponent $space = null;
     public ?string $error = null;
     public ?string $message = null;
 
     /**
-     * Inicializa el servicio de espacios mediante OFW.
+     * Inicializa las dependencias del componente.
      */
     public function __construct() {
         parent::__construct();
@@ -29,38 +26,39 @@ class CreateSpaceComponent extends OComponent {
     }
 
     /**
-     * Crea un espacio compartido para el usuario autenticado.
+     * Crea un espacio compartido.
      *
-     * @param ORequest $req Petición HTTP.
-     * @return void
+     * @param CreateSpaceDTO $dto Datos validados de entrada.
      */
-    public function run(ORequest $req): void {
-        $user_id = $req->getMiddlewareValue('Login', 'id');
-
-        if (!is_int($user_id) || $user_id <= 0) {
-            OMiddleware::setStatusCode(401);
+    public function run(CreateSpaceDTO $dto): void {
+        if (
+            !$dto->isValid() ||
+            $dto->idUser === null ||
+            $dto->name === null
+        ) {
+            $this->error = 'validation_error';
+            $this->message = 'El nombre del espacio es obligatorio.';
+            OMiddleware::setStatusCode(400);
             return;
         }
 
         try {
             $space = $this->space_service->createSharedSpace(
-                $user_id,
-                $req->getParam('name')
+                $dto->idUser,
+                $dto->name
             );
 
-            $this->success = true;
-            $this->id = $space['id'];
-            $this->name = $space['name'];
-            $this->type = $space['type'];
-            $this->owner_id = $space['owner_id'];
-            $this->is_owner = $space['is_owner'];
+            $this->space = new SpaceComponent([
+                'space' => $space,
+                'user_id' => $dto->idUser
+            ]);
 
+            $this->success = true;
             OMiddleware::setStatusCode(201);
         }
         catch (InvalidArgumentException $e) {
             $this->error = 'validation_error';
             $this->message = $e->getMessage();
-
             OMiddleware::setStatusCode(400);
         }
     }
