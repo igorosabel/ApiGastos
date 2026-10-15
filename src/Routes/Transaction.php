@@ -8,6 +8,7 @@ use Osumi\OsumiFramework\App\Middleware\LoginMiddleware;
 use Osumi\OsumiFramework\App\Module\Transaction\CreateTransaction\CreateTransactionComponent;
 use Osumi\OsumiFramework\App\Module\Transaction\GetTransactions\GetTransactionsComponent;
 use Osumi\OsumiFramework\App\Module\Transaction\UpdateTransaction\UpdateTransactionComponent;
+use Osumi\OsumiFramework\App\Module\Transaction\DeleteTransaction\DeleteTransactionComponent;
 
 ORoute::prefix('/transactions', function(): void {
     ORoute::get('', GetTransactionsComponent::class, [
@@ -23,6 +24,12 @@ ORoute::prefix('/transactions', function(): void {
     ]);
 
     ORoute::post('/update', UpdateTransactionComponent::class, [
+        OMiddleware::PHASE_BEFORE => [
+            LoginMiddleware::class
+        ]
+    ]);
+
+    ORoute::post('/delete', DeleteTransactionComponent::class, [
         OMiddleware::PHASE_BEFORE => [
             LoginMiddleware::class
         ]

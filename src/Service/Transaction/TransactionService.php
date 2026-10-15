@@ -9,6 +9,7 @@ use DomainException;
 use InvalidArgumentException;
 use LogicException;
 use RuntimeException;
+use PDOException;
 use Osumi\OsumiFramework\App\Model\FinancialTransaction;
 use Osumi\OsumiFramework\Core\OService;
 use Osumi\OsumiFramework\ORM\ODB;
@@ -722,6 +723,167 @@ class TransactionService extends OService {
             $transaction->date = $row['date'];
 
             return $transaction;
+        }
+        catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Elimina definitivamente un movimiento independiente.
+     *
+     * Los movimientos vinculados a ocurrencias recurrentes
+     * deben conservarse y se rechaza su eliminación.
+     *
+     * @param int $space_id Espacio contable.
+     * @param int $user_id Usuario autenticado.
+     * @param int $transaction_id Movimiento a eliminar.
+     * @return void
+     */
+    public function delete(
+        int $space_id,
+        int $user_id,
+        int $transaction_id
+    ): void {
+        if (
+            $space_id <= 0 ||
+            $user_id <= 0 ||
+            $transaction_id <= 0
+        ) {
+            throw new InvalidArgumentException(
+                'Los identificadores no son válidos.'
+            );
+        }
+
+        $db = ODB::getInstance();
+
+        if (!$db->beginTransaction()) {
+            throw new RuntimeException(
+                'No se ha podido iniciar la transacción.'
+            );
+        }
+
+        try {
+            // Coordina la operación con bajas de miembros
+            // y demás escrituras sobre el espacio.
+            $stmt = $db->prepare(
+                'SELECT id FROM `space`
+                 WHERE id = :space_id
+                 FOR UPDATE'
+            );
+
+            $stmt->execute([
+                'space_id' => $space_id
+            ]);
+
+            if ($stmt->fetch(PDO::FETCH_ASSOC) === false) {
+                throw new DomainException(
+                    'No tienes acceso a este espacio.'
+                );
+            }
+
+            // La pertenencia debe seguir activa.
+            $stmt = $db->prepare(
+                'SELECT id FROM `space_member`
+                 WHERE id_space = :space_id
+                   AND id_user = :user_id
+                   AND left_at IS NULL
+                 LIMIT 1'
+            );
+
+            $stmt->execute([
+                'space_id' => $space_id,
+                'user_id' => $user_id
+            ]);
+
+            if ($stmt->fetch(PDO::FETCH_ASSOC) === false) {
+                throw new DomainException(
+                    'No tienes acceso a este espacio.'
+                );
+            }
+
+            // Bloqueamos la fila que vamos a eliminar.
+            $stmt = $db->prepare(
+                'SELECT id FROM `financial_transaction`
+                 WHERE id = :transaction_id
+                   AND id_space = :space_id
+                 FOR UPDATE'
+            );
+
+            $stmt->execute([
+                'transaction_id' => $transaction_id,
+                'space_id' => $space_id
+            ]);
+
+            if ($stmt->fetch(PDO::FETCH_ASSOC) === false) {
+                throw new InvalidArgumentException(
+                    'El movimiento no pertenece al espacio.'
+                );
+            }
+
+            // Una ocurrencia confirmada debe conservar
+            // el movimiento al que está vinculada.
+            $stmt = $db->prepare(
+                'SELECT id FROM `recurring_occurrence`
+                 WHERE id_space = :space_id
+                   AND id_transaction = :transaction_id
+                 LIMIT 1'
+            );
+
+            $stmt->execute([
+                'space_id' => $space_id,
+                'transaction_id' => $transaction_id
+            ]);
+
+            if ($stmt->fetch(PDO::FETCH_ASSOC) !== false) {
+                throw new LogicException(
+                    'No se puede eliminar un movimiento vinculado a una ocurrencia recurrente.'
+                );
+            }
+
+            $stmt = $db->prepare(
+                'DELETE FROM `financial_transaction`
+                 WHERE id = :transaction_id
+                   AND id_space = :space_id'
+            );
+
+            try {
+                $stmt->execute([
+                    'transaction_id' => $transaction_id,
+                    'space_id' => $space_id
+                ]);
+            }
+            catch (PDOException $e) {
+                // Una nueva referencia concurrente puede
+                // quedar protegida por la clave foránea.
+                $sql_state = $e->errorInfo[0] ?? $e->getCode();
+
+                if ($sql_state === '23000') {
+                    throw new LogicException(
+                        'El movimiento tiene referencias asociadas y no puede eliminarse.',
+                        0,
+                        $e
+                    );
+                }
+
+                throw $e;
+            }
+
+            if ($stmt->rowCount() !== 1) {
+                throw new RuntimeException(
+                    'No se ha podido eliminar el movimiento.'
+                );
+            }
+
+            if (!$db->commit()) {
+                throw new RuntimeException(
+                    'No se ha podido confirmar la eliminación.'
+                );
+            }
         }
         catch (Throwable $e) {
             if ($db->inTransaction()) {
