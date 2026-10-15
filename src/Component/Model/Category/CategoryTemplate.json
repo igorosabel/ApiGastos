@@ -1,0 +1,8 @@
+{
+    "id": {{ category.id | number }},
+    "space_id": {{ category.id_space | number }},
+    "parent_id": {{ category.id_parent | number }},
+    "name": {{ category.name | plain }},
+    "default_type": {{ category.default_type | plain }},
+    "sort_order": {{ category.sort_order | number }}
+}
