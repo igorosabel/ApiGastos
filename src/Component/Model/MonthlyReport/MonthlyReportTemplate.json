@@ -1,0 +1,10 @@
+{
+    "space_id": {{ space_id | number }},
+    "month": {{ month | plain }},
+    "income": {{ income | plain }},
+    "expense": {{ expense | plain }},
+    "balance": {{ balance | plain }},
+    "income_count": {{ income_count | number }},
+    "expense_count": {{ expense_count | number }},
+    "transaction_count": {{ transaction_count | number }}
+}
