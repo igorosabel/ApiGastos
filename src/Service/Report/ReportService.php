@@ -190,4 +190,97 @@ class ReportService extends OService {
             ? '-' . $normalized
             : $normalized;
     }
+
+
+    /**
+     * Obtiene el desglose económico mensual por categoría directa.
+     *
+     * No agrega descendientes en categorías padre.
+     * Solo considera movimientos económicos reales.
+     *
+     * @param int $space_id Espacio contable.
+     * @param int $user_id Usuario autenticado.
+     * @param string $month Mes YYYY-MM.
+     * @return array{
+     *     space_id: int,
+     *     month: string,
+     *     categories: list<array{
+     *         category_id: int,
+     *         parent_id: ?int,
+     *         name: string,
+     *         type: string,
+     *         amount: string,
+     *         transaction_count: int
+     *     }>
+     * }
+     */
+    public function getMonthlyByCategory(
+        int $space_id,
+        int $user_id,
+        string $month
+    ): array {
+        // Reutiliza la validación de mes y autorización
+        // del informe mensual ya implementado.
+        $this->getMonthly($space_id, $user_id, $month);
+
+        $start = DateTimeImmutable::createFromFormat(
+            '!Y-m-d',
+            $month . '-01'
+        );
+
+        $date_from = $start->format('Y-m-d');
+        $date_to = $start->modify('+1 month')->format('Y-m-d');
+
+        $db = ODB::getInstance();
+
+        $stmt = $db->prepare(
+            'SELECT
+                c.id AS category_id,
+                c.id_parent AS parent_id,
+                c.name,
+                ft.type,
+                SUM(ft.amount) AS amount,
+                COUNT(*) AS transaction_count
+             FROM `financial_transaction` ft
+             INNER JOIN `category` c
+               ON c.id_space = ft.id_space
+              AND c.id = ft.id_category
+             WHERE ft.id_space = :space_id
+               AND ft.`date` >= :date_from
+               AND ft.`date` < :date_to
+             GROUP BY
+                c.id, c.id_parent, c.name, ft.type
+             ORDER BY
+                ft.type ASC,
+                amount DESC,
+                c.id ASC'
+        );
+
+        $stmt->execute([
+            'space_id' => $space_id,
+            'date_from' => $date_from,
+            'date_to' => $date_to
+        ]);
+
+        $categories = [];
+
+        while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $categories[] = [
+                'category_id' => (int) $row['category_id'],
+                'parent_id' => $row['parent_id'] === null
+                    ? null
+                    : (int) $row['parent_id'],
+                'name' => (string) $row['name'],
+                'type' => (string) $row['type'],
+                'amount' => $this->formatAmount($row['amount']),
+                'transaction_count' => (int) $row['transaction_count']
+            ];
+        }
+
+        return [
+            'space_id' => $space_id,
+            'month' => $month,
+            'categories' => $categories
+        ];
+    }
 }

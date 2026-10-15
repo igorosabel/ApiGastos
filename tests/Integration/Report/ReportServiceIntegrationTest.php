@@ -16,6 +16,9 @@ final class ReportServiceIntegrationTest extends OrmIntegrationTestCase {
 
     /**
      * Limpia los registros de integración.
+     *
+     * Respeta las claves foráneas y elimina las categorías
+     * desde las hojas hacia las raíces.
      */
     protected function tearDown(): void {
         try {
@@ -24,12 +27,12 @@ final class ReportServiceIntegrationTest extends OrmIntegrationTestCase {
             }
 
             foreach (array_reverse($this->spaces) as $space_id) {
+                // Primero eliminar los registros que dependen
+                // de las categorías y de los movimientos.
                 foreach ([
                     'recurring_occurrence',
                     'recurring_transaction',
-                    'financial_transaction',
-                    'category',
-                    'space_member'
+                    'financial_transaction'
                 ] as $table) {
                     $stmt = $this->db->prepare(
                         "DELETE FROM `{$table}` WHERE id_space = ?"
@@ -37,12 +40,52 @@ final class ReportServiceIntegrationTest extends OrmIntegrationTestCase {
                     $stmt->execute([$space_id]);
                 }
 
+                // Eliminar las categorías desde las hojas
+                // hacia las raíces para respetar la FK
+                // autorreferenciada.
+                $delete = $this->db->prepare(
+                    'DELETE c FROM `category` c
+                     LEFT JOIN `category` child
+                       ON child.id_space = c.id_space
+                      AND child.id_parent = c.id
+                     WHERE c.id_space = ?
+                       AND child.id IS NULL'
+                );
+
+                do {
+                    $delete->execute([$space_id]);
+                    $deleted = $delete->rowCount();
+                } while ($deleted > 0);
+
+                // Comprobar que todas las categorías
+                // del espacio se han eliminado.
+                $stmt = $this->db->prepare(
+                    'SELECT COUNT(*) FROM `category`
+                     WHERE id_space = ?'
+                );
+                $stmt->execute([$space_id]);
+
+                $this->assertSame(
+                    0,
+                    (int) $stmt->fetchColumn(),
+                    'Quedan categorías sin eliminar.'
+                );
+
+                // Eliminar las membresías.
+                $stmt = $this->db->prepare(
+                    'DELETE FROM `space_member`
+                     WHERE id_space = ?'
+                );
+                $stmt->execute([$space_id]);
+
+                // Eliminar el espacio.
                 $stmt = $this->db->prepare(
                     'DELETE FROM `space` WHERE id = ?'
                 );
                 $stmt->execute([$space_id]);
             }
 
+            // Eliminar los usuarios creados por la prueba.
             foreach (array_reverse($this->users) as $user_id) {
                 $stmt = $this->db->prepare(
                     'DELETE FROM `user` WHERE id = ?'
@@ -252,6 +295,225 @@ final class ReportServiceIntegrationTest extends OrmIntegrationTestCase {
         $this->assertSame('150.00', $after['expense']);
         $this->assertSame('-150.00', $after['balance']);
         $this->assertSame(1, $after['transaction_count']);
+    }
+
+
+    /**
+     * Agrupa movimientos por categoría directa sin
+     * perder precisión decimal.
+     */
+    public function testMonthlyCategoryTotals(): void {
+        [$space, $user, $expense, $income] = $this->prepareSpace();
+
+        $this->transaction(
+            $space, $user, $expense, 'expense', '0.10', '2026-10-01'
+        );
+        $this->transaction(
+            $space, $user, $expense, 'expense', '0.20', '2026-10-15'
+        );
+        $this->transaction(
+            $space, $user, $income, 'income', '1000.00', '2026-10-31'
+        );
+        $this->transaction(
+            $space, $user, $expense, 'expense', '25.00', '2026-11-01'
+        );
+
+        $result = (new ReportService())->getMonthlyByCategory(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame($space, $result['space_id']);
+        $this->assertSame('2026-10', $result['month']);
+        $this->assertCount(2, $result['categories']);
+
+        $by_id = [];
+        foreach ($result['categories'] as $category) {
+            $by_id[$category['category_id']] = $category;
+        }
+
+        $this->assertSame('0.30', $by_id[$expense]['amount']);
+        $this->assertSame(2, $by_id[$expense]['transaction_count']);
+        $this->assertSame('expense', $by_id[$expense]['type']);
+        $this->assertSame('1000.00', $by_id[$income]['amount']);
+        $this->assertSame(1, $by_id[$income]['transaction_count']);
+        $this->assertSame('income', $by_id[$income]['type']);
+    }
+
+    /**
+     * Una subcategoría no incrementa el importe directo
+     * de la categoría padre.
+     */
+    public function testCategoryHierarchyDoesNotDoubleCount(): void {
+        [$space, $user, $parent] = $this->prepareSpace();
+
+        $child = (new CategoryService())->create(
+            $space, $user, 'Supermercado', 'expense', $parent
+        );
+
+        $this->assertNotNull($child->id);
+
+        $this->transaction(
+            $space, $user, $parent, 'expense',
+            '20.00', '2026-10-10'
+        );
+        $this->transaction(
+            $space, $user, $child->id, 'expense',
+            '35.00', '2026-10-11'
+        );
+
+        $result = (new ReportService())->getMonthlyByCategory(
+            $space, $user, '2026-10'
+        );
+
+        $by_id = [];
+        foreach ($result['categories'] as $category) {
+            $by_id[$category['category_id']] = $category;
+        }
+
+        $this->assertSame('20.00', $by_id[$parent]['amount']);
+        $this->assertNull($by_id[$parent]['parent_id']);
+        $this->assertSame('35.00', $by_id[$child->id]['amount']);
+        $this->assertSame($parent, $by_id[$child->id]['parent_id']);
+
+        $monthly = (new ReportService())->getMonthly(
+            $space, $user, '2026-10'
+        );
+        $this->assertSame('55.00', $monthly['expense']);
+    }
+
+    /**
+     * Un mes vacío no inventa entradas por categoría.
+     */
+    public function testMonthlyCategoriesEmptyMonth(): void {
+        [$space, $user] = $this->prepareSpace();
+
+        $result = (new ReportService())->getMonthlyByCategory(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame([], $result['categories']);
+    }
+
+    /**
+     * Las ocurrencias pendientes no se incluyen.
+     */
+    public function testPendingOccurrencesNotCountedByCategory(): void {
+        [$space, $user, $expense] = $this->prepareSpace();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `recurring_transaction`
+             (id_space, id_category, type, amount, concept,
+              day_of_month, start_date, active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->execute([
+            $space, $expense, 'expense', '150.00',
+            'Alquiler', 15, '2026-10-01', 1
+        ]);
+
+        $recurring_id = (int) $this->db->lastInsertId();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `recurring_occurrence`
+             (id_space, id_recurring_transaction, period,
+              scheduled_date, status, id_category,
+              type, concept, amount)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->execute([
+            $space, $recurring_id, '2026-10-01',
+            '2026-10-15', 'pending', $expense,
+            'expense', 'Alquiler', '150.00'
+        ]);
+
+        $occurrence_id = (int) $this->db->lastInsertId();
+
+        $service = new ReportService();
+
+        $this->assertSame(
+            [],
+            $service->getMonthlyByCategory(
+                $space, $user, '2026-10'
+            )['categories']
+        );
+
+        (new \Osumi\OsumiFramework\App\Service\Recurring\OccurrenceService())
+            ->resolve($space, $user, $occurrence_id, 'confirm');
+
+        $after = $service->getMonthlyByCategory(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertCount(1, $after['categories']);
+        $this->assertSame('150.00', $after['categories'][0]['amount']);
+        $this->assertSame(1, $after['categories'][0]['transaction_count']);
+    }
+
+    /**
+     * El informe solo recoge datos del espacio solicitado.
+     */
+    public function testMonthlyCategoriesSpaceIsolation(): void {
+        [$space, $user] = $this->prepareSpace();
+        [$other_space, $other_user, $expense] = $this->prepareSpace();
+
+        $this->transaction(
+            $other_space, $other_user, $expense,
+            'expense', '999.99', '2026-10-01'
+        );
+
+        $result = (new ReportService())->getMonthlyByCategory(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame([], $result['categories']);
+    }
+
+    /**
+     * Un usuario ajeno no puede consultar el desglose.
+     */
+    public function testOutsiderCannotReadMonthlyCategories(): void {
+        [$space] = $this->prepareSpace();
+        $outsider = $this->createUser();
+
+        $this->expectException(DomainException::class);
+
+        (new ReportService())->getMonthlyByCategory(
+            $space, $outsider, '2026-10'
+        );
+    }
+
+    /**
+     * Una membresía inactiva tampoco concede acceso.
+     */
+    public function testInactiveMemberCannotReadMonthlyCategories(): void {
+        [$space] = $this->prepareSpace();
+        $member = $this->createUser();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `space_member`
+             (id_space, id_user, left_at)
+             VALUES (?, ?, NOW())'
+        );
+        $stmt->execute([$space, $member]);
+
+        $this->expectException(DomainException::class);
+
+        (new ReportService())->getMonthlyByCategory(
+            $space, $member, '2026-10'
+        );
+    }
+
+    /**
+     * No admite meses con formato incorrecto.
+     */
+    public function testMonthlyCategoriesInvalidMonth(): void {
+        [$space, $user] = $this->prepareSpace();
+
+        $this->expectException(InvalidArgumentException::class);
+
+        (new ReportService())->getMonthlyByCategory(
+            $space, $user, '2026-13'
+        );
     }
 
     /**

@@ -1,0 +1,8 @@
+{
+    "category_id": {{ category_id | number }},
+    "parent_id": {{ parent_id | number }},
+    "name": {{ name | plain }},
+    "type": {{ type | plain }},
+    "amount": {{ amount | plain }},
+    "transaction_count": {{ transaction_count | number }}
+}
