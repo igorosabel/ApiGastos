@@ -1,194 +1,153 @@
 # ApiGastos — Roadmap y documento de continuidad
 
-**Última actualización:** 15 de octubre de 2026  
-**Estado de referencia:** rama `main` de [igorosabel/ApiGastos](https://github.com/igorosabel/ApiGastos), commit **`339284b53fa6570b6778002546d5312c57d5c61f`** (`feat(transactions): añadir filtros y paginación de movimientos`).  
-**Propósito:** permitir retomar el desarrollo desde cero, en otra conversación o por otro desarrollador, distinguiendo el código implementado de las decisiones pendientes.  
-**Ubicación propuesta:** `docs/development/CONTINUIDAD_APIGASTOS.md` (sustituye la versión anterior).
+**Actualización:** 15 de octubre de 2026  
+**Repositorio:** https://github.com/igorosabel/ApiGastos  
+**Estado verificado:** rama `main`, commit **`4f924b8554`** (`feat(recurring): filtrar y paginar ocurrencias`).  
+**Siguiente bloque propuesto:** fase 7, informes económicos mensuales basados exclusivamente en movimientos reales.  
+**Ubicación:** `docs/development/CONTINUIDAD_APIGASTOS.md` (sustituir el documento anterior).
 
-> **Vigencia:** este archivo describe una fotografía del repositorio y recoge las últimas validaciones comunicadas. Ante diferencias, **prevalecen `AGENTS.md`, el código vivo y las pruebas**. Leerlos de nuevo antes de proponer cambios; nunca deducir el estado actual exclusivamente de este documento.
+> Este documento es una fotografía de continuidad, no una fuente más autorizada que el código. **Al retomar hay que volver a leer `AGENTS.md`, consultar HEAD, los archivos reales y `docs/development/`.** Las pruebas mencionadas fueron ejecutadas y declaradas satisfactorias por el desarrollador; no se han ejecutado desde la elaboración de esta versión.
 
-## 1. Resumen ejecutivo y punto exacto de reanudación
+## 1. Qué es Gastos
 
-**ApiGastos** es la API REST de **Gastos**, aplicación libre y autoalojable para ingresos y gastos personales y compartidos. Cada usuario dispone de un **espacio personal**, y puede pertenecer a uno o más **espacios compartidos**. Los datos se aíslan por espacio.
+Gastos es una aplicación libre y autoalojable de contabilidad doméstica y compartida. **ApiGastos** es su backend REST en PHP y Osumi Framework (OFW). El frontend **Angular/PrimeNG** reside por separado en https://github.com/igorosabel/Gastos. No mezclar cambios de ambos repositorios ni asumir que el frontend ya consume los endpoints actuales.
 
-**Implementado y validado hasta el commit de referencia:** registro/login/JWT/usuario actual; creación y listado de espacios; invitaciones a espacios compartidos (crear, aceptar, listar, revocar, protección de duplicados concurrentes); consulta de miembros; salida voluntaria y expulsión con baja lógica y reincorporación; categorías jerárquicas (crear, listar, editar, mover sin ciclos, eliminar si no tienen dependencias); movimientos reales de ingresos y gastos (crear, listar, filtrar y paginar). DTO y pruebas ya se organizan por dominios.
+Cada persona posee un espacio personal y puede compartir otros espacios; categorías, movimientos económicos, plantillas recurrentes y ocurrencias se aíslan estrictamente por `id_space`.
 
-**Último bloque completado:** filtros y paginación de `GET /transactions`, commit `339284b`. El usuario comunicó que **todos los tests y pruebas funcionales pasaron**, y que los cambios fueron subidos al repositorio. Esto no equivale a que este documento haya ejecutado las pruebas localmente.
+## 2. Tecnologías y normas de trabajo
 
-**Siguiente bloque recomendado:** edición de movimientos (`POST /transactions/update` o ruta a convenir siguiendo las convenciones actuales), con validación del espacio, categoría, precisión monetaria, membresía activa, identidad/autorización y compatibilidad con movimientos vinculados a ocurrencias recurrentes. Después, política de eliminación, y a continuación recurrentes e informes. **No hay código de edición de movimientos en el commit de referencia.**
-
-**No mezclar frontend:** Angular/PrimeNG reside en [igorosabel/Gastos](https://github.com/igorosabel/Gastos), otro repositorio con su propio desarrollo.
-
-## 2. Reglas obligatorias de colaboración
-
-1. Antes de cualquier modificación de código, leer **`AGENTS.md` del repositorio vigente**, `docs/development/ofw-patterns.md`, `docs/development/testing.md` y los archivos reales afectados. Consultar la documentación/código fuente de OFW cuando una API no esté contrastada.
-2. Desarrollo incremental en **bloques funcionalmente completos**. Cada entrega debe incluir **todos los archivos, cambios y tests necesarios**, con contenido completo para archivos nuevos; no dejar instrucciones vagas de «crear un test» o «añadir algo similar». Si se cambia un método difícil de integrar, ofrecerlo íntegro.
-3. Entregar el código y las pruebas antes de avanzar; el usuario lo implementa, verifica, confirma y sube en un único commit lógico. No avanzar mientras existan tests rojos, warnings, notices o problemas funcionales.
-4. Respeto a la arquitectura OFW: DTO con `ODTO`/`#[ODTOField]`; usuario autenticado obtenido de `LoginMiddleware` y no del cliente; componentes `OComponent` que inyectan servicios con `inject()`; respuestas ordinarias `.json` y componentes anidados de representación/listado; servicios que extienden `OService`.
-5. Priorizar ORM `OModel` para operaciones normales; SQL directo solo cuando está justificado por bloqueos, consistencia, agregaciones, filtros u otras limitaciones. Para operaciones atómicas usar la **misma conexión** que utiliza ORM; no alterar OFW para resolver necesidades de Gastos sin estudiar si corresponden al framework.
-6. PHP `declare(strict_types=1)`, tipado explícito y PHPDoc para métodos. Proteger datos de espacios y no exponer secretos. Importes **DECIMAL como strings PHP**; **no floats monetarios**.
-7. Mantener separados backend ApiGastos y frontend Angular. Mantener esta continuidad actualizada cuando haya avances materiales.
-
-**Aprendizaje de trabajo:** el usuario prefiere un ritmo de entregas completas y verificables, no secuencias de múltiples micro-commits; pide indicaciones precisas y todos los archivos nuevos completos. La reorganización de carpetas se hizo para mejorar la escalabilidad y debe conservarse.
-
-## 3. Entorno y referencias
-
-| Elemento | Referencia vigente |
+| Aspecto | Estado |
 |---|---|
-| Backend | `https://github.com/igorosabel/ApiGastos` |
-| Frontend separado | `https://github.com/igorosabel/Gastos` |
 | PHP | `>=8.5` |
-| OFW | Composer `osumionline/framework: ^9.12.1` |
-| Token JWT | `osumionline/plugin-token: ^3.0` |
-| Base de datos | MariaDB 12.3.x, InnoDB, utf8mb4 |
-| Pruebas | PHPUnit `^13.4`, suites Unit e Integration |
-| Despliegue | Debian 13 / Plesk |
-| Autoload | PSR-4 `Osumi\\OsumiFramework\\App\\` → `src/` |
-| Documentación OFW | `https://github.com/osumionline/framework/tree/main/docs/en` |
-| Referencia orientativa adicional | `https://github.com/osumionline/TPV-Backup-API` |
+| Framework | `osumionline/framework: ^9.12.1` |
+| JWT | `osumionline/plugin-token: ^3.0` |
+| BD | MariaDB 12.3.x, InnoDB, utf8mb4 |
+| Tests | PHPUnit `^13.4`; suites Unit e Integration |
+| Entorno | Debian 13 / Plesk |
+| Autoload | `Osumi\OsumiFramework\App\` → `src/` |
+| Esquema inicial | `src/Database/001_initial_schema.sql` |
+| Normas | `AGENTS.md`, `docs/development/ofw-patterns.md`, `docs/development/testing.md` |
 
-Archivos fuente de normas: `AGENTS.md`, `docs/development/ofw-patterns.md`, `docs/development/testing.md`, `src/Database/001_initial_schema.sql`. `README.md` aporta objetivos generales, pero puede tener un resumen de estado menos actualizado que los endpoints del repositorio.
+**Flujo obligatorio:** revisar código/documentación del HEAD; proponer un bloque funcional pequeño pero completo, incluyendo archivos nuevos, cambios y tests; el desarrollador lo aplica, pasa las pruebas y comprueba HTTP, sube un commit y solo entonces se continúa. No afirmar que un test ha pasado sin que el usuario lo confirme. No modificar OFW para solucionar Gastos sin discutir previamente si el cambio pertenece al framework.
 
-## 4. Estado funcional por fases
+**Convenciones OFW:** DTO `ODTO` + atributos `#[ODTOField]`; identidad `idUser` procedente de `LoginMiddleware` mediante contexto de middleware (nunca del cliente); `OComponent` con servicios obtenidos mediante `inject()`; plantilla `.json` con pipes OFW (`plain`, `bool`, `number`); representación de listas con componentes modelo/listado. Servicios `OService`, ORM `OModel`/`where()`/`save()` primero, SQL directo únicamente para consultas/operaciones que lo necesitan. PHP `declare(strict_types=1)`, PHPDoc y tipos. Para transacciones utilizar **la conexión compartida** `ODB::getInstance()` y verificar que ORM participa en ella. Importes `DECIMAL(12,2)` en MariaDB y **strings exactos en PHP; nunca floats monetarios**.
 
-| Fase | Estado al commit de referencia | Alcance |
+## 3. Estado de las fases
+
+| Fase | Estado al HEAD verificado | Implementación |
 |---|---|---|
-| 0. Base técnica | **HECHA** | Proyecto OFW, configuración, esquema SQL y modelos, pruebas base e integración |
-| 1. Autenticación | **HECHA (alcance inicial)** | Registro atómico usuario + espacio personal + membresía, login JWT, `/auth/me` |
-| 2. Espacios e invitaciones | **HECHA (alcance inicial)** | Crear/listar espacios, crear/aceptar/listar/revocar invitaciones, control de concurrencia |
-| 3. Miembros | **HECHA (alcance actual)** | Listado, salida voluntaria, expulsión, `left_at` y reincorporación; **propiedad/transferencia pendiente de política** |
-| 4. Categorías | **HECHA (CRUD básico)** | Crear/listar, editar/ordenar/reorganizar, validar árbol sin ciclos, eliminar hojas sin referencias |
-| 5. Movimientos | **EN CURSO** | Creación y listado, filtros y paginación terminados; faltan edición, eliminación/políticas y posibles consultas especializadas |
-| 6. Recurrentes y ocurrencias | **PENDIENTE** | Existen tablas/modelos; faltan servicios, endpoints y resolución ACID |
-| 7. Informes/previsiones | **PENDIENTE** | Totales mensuales, categorías, comparativas, proyecciones |
-| 8. Endurecimiento/documentación/release | **PENDIENTE** | Casos límite, concurrencia, seguridad, rendimiento, contratos y despliegue |
-| 9. Evolución posterior | **PENDIENTE/DECISIONES** | Perfiles, transferencias de propiedad, auditoría avanzada, otras funciones futuras |
+| 0. Base técnica | Completada | Esquema, modelos OFW, configuración, tests |
+| 1. Autenticación | Completada en alcance inicial | Registro atómico, espacio personal, login JWT, usuario actual |
+| 2. Espacios e invitaciones | Completada en alcance inicial | Espacios compartidos, invitación/aceptación/revocación/listados y protecciones de concurrencia |
+| 3. Miembros | Completada en alcance inicial | Consulta, salida, expulsión, baja lógica y reactivación; transferencia de propiedad no definida |
+| 4. Categorías | CRUD básico completo | Árbol jerárquico, tipos, actualización y reordenación sin ciclos, borrado restringido |
+| 5. Movimientos | CRUD básico completo | Crear, consultar con filtros/paginación, editar, eliminar independientes; proteger los vinculados a recurrentes |
+| 6. Recurrentes | **Ciclo principal implementado** | Plantillas, activación, generación por plantilla y espacio, instantáneas, consulta filtrada/paginada, confirmación/omisión ACID |
+| 7. Informes y previsiones | **Pendiente: siguiente fase** | Resumen mensual, desglose por categoría, comparativas, previsiones separadas de contabilidad real |
+| 8. Hardening, documentación y release | Pendiente | Concurrencia reforzada, contratos, rendimiento, instalación y versión estable |
 
-No atribuir porcentajes globales de avance: las fases restantes son heterogéneas y el núcleo de recurrentes/informes aún no existe como API.
+**Último bloque completado y validado por el usuario:** bloque 25, filtros y paginación de ocurrencias (`4f924b8554`).
 
-## 5. Contratos HTTP implementados
+## 4. Rutas HTTP implementadas (28)
 
-Todas las rutas siguientes fueron contrastadas con los archivos de `src/Routes` en el commit de referencia. El path de grupo es literal; el comportamiento completo debe contrastarse con DTO, componentes y servicios antes de cambiar un contrato. Salvo registro/login, las rutas enumeradas requieren `LoginMiddleware`.
+Las siguientes se han contrastado con `src/Routes/{Auth,Space,Category,Transaction,Recurring}.php` de `main`. Salvo registro y login, están protegidas con `LoginMiddleware`.
 
-| Método | Ruta | Estado / detalle |
+| Método | Ruta | Función |
 |---|---|---|
-| POST | `/auth/register` | Registro; crea espacio personal y membresía |
-| POST | `/auth/login` | Inicio de sesión JWT |
-| GET | `/auth/me` | Usuario autenticado |
-| GET | `/spaces` | Solo espacios de membresía activa |
-| POST | `/spaces` | Crea espacio compartido |
-| POST | `/spaces/invitations` | Invitación de propietario |
-| POST | `/spaces/invitations/accept` | Aceptación, con reactivación si ya fue miembro inactivo |
-| GET | `/spaces/invitations` | Listado de invitaciones por propietario |
-| POST | `/spaces/invitations/revoke` | Revocación de pendiente |
-| GET | `/spaces/members` | Miembros activos, solo propietario del compartido |
-| POST | `/spaces/members/leave` | Salida voluntaria, salvo propietario |
-| POST | `/spaces/members/remove` | Expulsión por propietario, salvo a sí mismo |
-| GET | `/categories` | Categorías de espacio accesible (`spaceId`) |
-| POST | `/categories` | Crear categoría, raíz o hija |
-| POST | `/categories/update` | Editar nombre, padre y orden; sin alterar tipo |
-| POST | `/categories/delete` | Eliminar si no tiene referencias ni hijos |
-| POST | `/transactions` | Crear gasto o ingreso real |
-| GET | `/transactions` | Filtros opcionales y paginación |
+| POST | `/auth/register` | Registro; espacio personal y membresía |
+| POST | `/auth/login` | Autenticación JWT |
+| GET | `/auth/me` | Usuario actual |
+| GET | `/spaces` | Espacios del usuario |
+| POST | `/spaces` | Crear espacio compartido |
+| POST | `/spaces/invitations` | Crear invitación |
+| POST | `/spaces/invitations/accept` | Aceptar invitación |
+| GET | `/spaces/invitations` | Consultar invitaciones |
+| POST | `/spaces/invitations/revoke` | Revocar invitación |
+| GET | `/spaces/members` | Consultar miembros |
+| POST | `/spaces/members/leave` | Abandonar espacio |
+| POST | `/spaces/members/remove` | Expulsar miembro |
+| GET | `/categories` | Listar categorías |
+| POST | `/categories` | Crear categoría |
+| POST | `/categories/update` | Editar/reorganizar categoría |
+| POST | `/categories/delete` | Borrar categoría sin dependencias |
+| GET | `/transactions` | Movimientos filtrados/paginados |
+| POST | `/transactions` | Registrar ingreso/gasto |
+| POST | `/transactions/update` | Editar movimiento independiente |
+| POST | `/transactions/delete` | Borrar movimiento independiente |
+| GET | `/recurring` | Plantillas del espacio (activas e inactivas) |
+| POST | `/recurring` | Crear plantilla |
+| POST | `/recurring/update` | Editar plantilla |
+| POST | `/recurring/status` | Activar/desactivar plantilla |
+| POST | `/recurring/generate` | Generar ocurrencia de plantilla/mes |
+| POST | `/recurring/generate-space` | Generar mes para plantillas activas del espacio |
+| GET | `/recurring/occurrences` | Filtrar/paginar ocurrencias |
+| POST | `/recurring/occurrences/resolve` | Confirmar u omitir ocurrencia |
 
-**`GET /transactions`:** `spaceId` obligatorio; opcionales `dateFrom`, `dateTo` (inclusive, `YYYY-MM-DD`), `type` (`expense`/`income`), `categoryId`, `page` (1 por defecto), `pageSize` (20 por defecto, máximo 100). `page` se limita a 100000 en servicio. Orden `date DESC, id DESC`; respuesta incluye `success`, `transactions`, `total`, `page`, `page_size`, `total_pages`, `error`, `message`. Una página fuera de rango devuelve lista vacía; el conteo y la página son consultas separadas, no una instantánea transaccional garantizada.
+**Inventario:** 28 rutas (3 Auth + 9 Space + 4 Category + 4 Transaction + 8 Recurring). La ruta de página inicial (`src/Routes/Home.php`) queda fuera del inventario REST.
 
-**`POST /transactions`:** `spaceId`, `categoryId`, `type`, `amount` string con **exactamente dos decimales** y valor positivo compatible con DECIMAL(12,2), `date` válida `YYYY-MM-DD`, `concept` opcional hasta 255 caracteres. El servicio determina `id_user` a partir de la identidad autenticada. La categoría debe pertenecer al espacio y coincidir con el tipo. Respuesta de creación `201` con representación de movimiento (importe como string).
+### Contratos relevantes
 
-**Categorías:** `default_type` (`expense` o `income`) inmutable en edición; categorías hija y padre deben ser del mismo tipo y espacio; no se admiten ciclos; la eliminación rechaza dependencias de `category`, `financial_transaction`, `recurring_transaction` y `recurring_occurrence` (`409 category_in_use`). No se efectúan cascadas de borrado de categorías con historial.
+**`GET /transactions`**: `spaceId` obligatorio; `dateFrom`, `dateTo` inclusive (`YYYY-MM-DD`), `type` (`expense`/`income`), `categoryId`, `page` por defecto 1, `pageSize` por defecto 20 (máximo 100; página máxima 100000). Orden `date DESC, id DESC`; responde `transactions`, `total`, `page`, `page_size`, `total_pages`, `success`, `error`, `message`.
 
-## 6. Arquitectura y ubicación del código
+**`POST /transactions`**: categoría del mismo espacio y tipo; importe positivo `string` con dos decimales; fecha válida; concepto opcional hasta 255. El autor se deriva de middleware. **Edición** mantiene `id`, `id_space`, `id_user`; **edición y borrado** rechazan movimientos relacionados con cualquier `recurring_occurrence` (`409`). El borrado de movimientos independientes es físico e irreversible según política actual.
+
+**Plantillas recurrentes**: `spaceId`, `categoryId`, `type`, `amount` string, `concept` obligatorio, `dayOfMonth` 1–31, `startDate`, `endDate` opcional y `active`. Las modificaciones futuras NO reescriben las instantáneas de ocurrencias ya creadas. Las plantillas inactivas siguen apareciendo en GET.
+
+**`POST /recurring/generate`**: `spaceId`, `recurringId`, `period` como `YYYY-MM-01`. Ajusta días 29–31 al último del mes; nunca genera antes del mes de creación ni antes de `startDate`, ni después de `endDate`. Una ocurrencia nueva se guarda `pending`, con instantánea de concepto, categoría, tipo, importe, fecha y sin transacción real. Primera creación: HTTP 201, `created=true`; reintento: 200, `created=false` y mismos datos incluso si cambió la plantilla o se resolvió. Restricción BD única `(id_recurring_transaction,period)`.
+
+**`POST /recurring/generate-space`**: `spaceId`, `period`; evalúa plantillas activas; devuelve recuentos `created`, `existing`, `skipped`, `total` (plantillas activas evaluadas). Reutiliza la generación individual. **No es una transacción global del lote**: cada plantilla se confirma individualmente, reintentable e idempotente; un fallo intermedio puede dejar algunas generadas. Las plantillas inactivas no entran en `total`; `skipped` alude a plantillas fuera de fecha, **no** a ocurrencias con estado `skipped`.
+
+**`POST /recurring/occurrences/resolve`**: `spaceId`, `occurrenceId`, `action` `confirm` o `skip`. La confirmación crea exactamente un `financial_transaction` usando la instantánea y al usuario que confirma como autor; guarda `id_transaction`, marca `confirmed` y rellena `resolved_at` **en la misma transacción ACID**. Omitir marca `skipped` y no crea movimiento. Resolver otra vez devuelve conflicto 409. Una plantilla desactivada no invalida ocurrencias pendientes existentes.
+
+**`GET /recurring/occurrences`**: `spaceId` obligatorio; opcionales `status` (`pending`/`confirmed`/`skipped`), `periodFrom`, `periodTo` (`YYYY-MM-01`, ambos incluidos), `recurringId`, `page` (1), `pageSize` (20; máximo 100; página máxima 100000). Filtro por **periodo**, no por fecha programada. Orden `scheduled_date DESC, id DESC`. Responde `occurrences`, `total`, `page`, `page_size`, `total_pages`, `success`, `error`, `message`. `OccurrenceService::getBySpace()` original se conserva para compatibilidad, mientras la ruta HTTP usa `search()`.
+
+**Errores:** entradas inválidas 400; ausencia de permiso/membresía activa 403; conflicto de estado/referencias 409. Leer el componente real para identificar campos exactos `error/message` y la cobertura HTTP en cada endpoint.
+
+## 5. Esquema y reglas de integridad
+
+Tablas existentes en `src/Database/001_initial_schema.sql` y modelos generados en `src/Model/`:
+
+- `user`; `space` (personal/compartido, dueño); `space_member` (clave única espacio/usuario, `left_at`); `space_invitation` (token hash, expiración/resolución).
+- `category` (padre, orden, tipo inmutable); `financial_transaction` (importe exacto, autor, fecha, categoría, espacio).
+- `recurring_transaction` (plantilla mensual, fechas, activación); `recurring_occurrence` (instantánea histórica, periodo, estado, resolución y vínculo eventual con movimiento).
+
+**Aislamiento:** FKs compuestas `(id_space,id_category)`, `(id_space,id_transaction)` donde corresponda; comprobar pertenencia y tipo también en servicios. No hay que regenerar modelos sin revisar diferencias, restricciones y comportamiento de OFW. No se presupone un directorio de migraciones incrementales de Gastos.
+
+**Concurrencia:** operaciones que escriben suelen bloquear `space` (`SELECT ... FOR UPDATE`) antes de miembros, plantillas, movimientos u ocurrencias. Confirmación de ocurrencia es atómica; clave única protege duplicados. Mantener un orden de bloqueos coherente ante futuros cambios. La búsqueda paginada (transacciones/ocurrencias) usa consultas separadas `COUNT` y lista; no promete una instantánea estricta si hay escrituras concurrentes.
+
+**Datos con historial:** `space_member.left_at` desactiva y permite reactivación conservando la fila (no registra todos los periodos de membresía). No borrar físicamente categorías con dependencias ni movimientos vinculados a ocurrencias; no borrar/anonimizar usuarios y espacios con historial sin política explícita.
+
+## 6. Organización del código
 
 ```text
 src/
-  Routes/              Auth.php, Space.php, Category.php, Transaction.php
-  DTO/
-    Space/             DTO de espacios, miembros e invitaciones
-    Category/          Create/Get/Update/DeleteCategoryDTO
-    Transaction/       CreateTransactionDTO, GetTransactionsDTO
-  Service/
-    Auth/              AuthService, RegistrationService, RegistrationValidator
-    Space/             SpaceService, SpaceInvitationService, SpaceMemberService
-    Category/          CategoryService
-    Transaction/       TransactionService
-  Module/
-    Auth/              Register, Login, Me
-    Space/             CreateSpace, GetSpaces, Create/Accept/Get/RevokeInvitation,
-                       GetMembers, LeaveSpace, RemoveMember
-    Category/          CreateCategory, GetCategories, UpdateCategory, DeleteCategory
-    Transaction/       CreateTransaction, GetTransactions
-  Component/Model/     Space/List, SpaceInvitation/List, SpaceMember/List,
-                       Category/List, Transaction/List
-  Model/               User, Space, SpaceMember, SpaceInvitation, Category,
-                       FinancialTransaction, RecurringTransaction,
-                       RecurringOccurrence
-  Database/            001_initial_schema.sql
+  Routes/                   Auth, Space, Category, Transaction, Recurring
+  DTO/{Space,Category,Transaction,Recurring}/
+  Service/Auth/             AuthService, RegistrationService, RegistrationValidator
+  Service/Space/            SpaceService, SpaceInvitationService, SpaceMemberService
+  Service/Category/         CategoryService
+  Service/Transaction/      TransactionService
+  Service/Recurring/        RecurringService, OccurrenceService, SpaceOccurrenceService
+  Module/{Auth,Space,Category,Transaction,Recurring}/
+  Component/Model/          Space, SpaceList, SpaceInvitation, SpaceInvitationList,
+                            SpaceMember, SpaceMemberList, Category, CategoryList,
+                            Transaction, TransactionList, Recurring, RecurringList,
+                            Occurrence, OccurrenceList
+  Model/                    8 modelos de entidad
+  Database/                 001_initial_schema.sql
 
 tests/
   bootstrap.php
-  Unit/Auth/ | Unit/Space/ | Unit/Category/ | Unit/Transaction/
-  Integration/Auth/ | Integration/Space/ | Integration/Category/ |
-  Integration/Transaction/
+  Unit/{Auth,Space,Category,Transaction,Recurring}/
+  Integration/{Auth,Space,Category,Transaction,Recurring}/
   Integration/OrmIntegrationTestCase.php
 ```
 
-**Namespaces DTO:** por ejemplo `Osumi\OsumiFramework\App\DTO\Transaction\GetTransactionsDTO`. Los tests movidos de carpeta conservan sus nombres y namespaces anteriores. Los tests de integración en subcarpetas cargan su base con `require_once dirname(__DIR__) . '/OrmIntegrationTestCase.php';`.
+La organización es PSR-4; no volver a poner los DTO en una carpeta plana. Integraciones por dominio cargan `require_once dirname(__DIR__) . '/OrmIntegrationTestCase.php';`. Las rutas `src/Routes/*.php` siguen el prefijo y middleware OFW; no inventar convenciones de un proyecto distinto.
 
-**Estilo HTTP:** el componente toma un DTO, comprueba `isValid()`, invoca servicio inyectado, prepara componentes de respuesta y asigna códigos HTTP. No mezclar validaciones de negocio en DTO ni pasar IDs autenticados controlados por cliente. Las plantillas `.json` usan pipes (`bool`, `plain`, `number`) y componentes de listado.
+## 7. Estrategia de pruebas
 
-## 7. Decisiones de negocio y persistencia que deben preservarse
-
-### 7.1 Espacios y membresías
-
-- `space.type` vale `personal` o `shared`; el personal corresponde a su propietario. El propietario debe figurar como miembro.
-- `space_member` tiene clave única `(id_space,id_user)` y un campo nullable `left_at`.
-- `left_at IS NULL`: membresía **activa**; fecha: membresía histórica/inactiva. No eliminar físicamente la fila para una baja. La FK de `financial_transaction` hacia `(id_space,id_user)` depende de conservar esa historia.
-- **Reincorporación acordada: opción A.** Tras nueva invitación, actualizar la **misma fila** `space_member` (`left_at=NULL`, `joined_at=NOW()`), sin insertar otra y manteniendo su ID. No existe tabla de periodos de pertenencia; un historial exhaustivo de entradas/salidas exigiría diseño posterior.
-- Un antiguo miembro no puede listar espacios, consultar o alterar categorías/movimientos. Toda nueva operación debe verificar **membresía activa**, nunca solo existencia histórica.
-- Solo el propietario administra invitaciones y consulta miembros del compartido; propietario no puede abandonar ni expulsarse. Transferencia de propiedad y destino de espacios sin propietario **no están implementados ni definidos completamente**.
-
-### 7.2 Invitaciones y concurrencia
-
-- Invitar requiere propiedad, email válido, destinatario que no sea miembro activo y ausencia de invitación pendiente vigente duplicada.
-- Token aleatorio: se guarda únicamente **SHA-256**; no publicar `token_hash` en listados. La aceptación exige token válido, email del usuario autenticado coincidente, pendiente, no revocada, no caducada; consumir una sola vez y añadir/reactivar miembro atómicamente.
-- Se usa bloqueo `SELECT ... FOR UPDATE` sobre el espacio en creación de invitaciones y en operaciones de pertenencia; aceptación también bloquea invitación y espacio. Mantener un **orden de bloqueo consistente** para nuevas operaciones y revisar riesgo de interbloqueos si se añaden flujos concurrentes.
-- Existe prueba de contención con dos conexiones; no asumir que equivale a cobertura exhaustiva de todas las carreras posibles.
-
-### 7.3 Categorías
-
-- `category` se particiona por `id_space`, tiene `id_parent`, `name`, `default_type` y `sort_order`.
-- Padre e hija mismo espacio y tipo; no auto-padre ni ciclos indirectos. Editar permite cambiar nombre/padre/orden, **no** tipo ni espacio.
-- Reorganizaciones usan transacción y bloqueo de espacio, además de recorrido de ascendientes. Crear y borrar categorías de forma concurrente requiere seguir revisando invariantes al ampliar usos.
-- Borrar únicamente categorías sin hijos y sin referencias en movimientos, plantillas y ocurrencias. Las FKs `ON DELETE RESTRICT` son la defensa definitiva ante referencias concurrentes.
-- La limpieza de tests con árboles debe borrar de **hojas a raíces**, nunca confiar en que un ID mayor sea siempre descendiente tras reorganización.
-
-### 7.4 Movimientos reales
-
-- `financial_transaction` utiliza `amount DECIMAL(12,2)` y PHP `?string $amount` en el modelo. No convertir a `float`; validar escala/formato y valor positivo.
-- `type` `expense|income`, `date` válida, `category` existente, mismo espacio y tipo; `concept` opcional; `id_user` siempre autenticado y asociado a membresía activa.
-- Para crear movimiento, el servicio bloquea fila `space` dentro de la transacción: coordina creación con `leave/remove`. Tras confirmar una baja no se podrá crear un movimiento como usuario inactivo.
-- Para búsquedas filtradas se justifica SQL preparado (`COUNT`, filtros, `LIMIT/OFFSET`, orden estable) mientras que creación/operaciones ordinarias siguen recurriendo a OModel cuando encaja.
-- **Punto a decidir antes de editar o eliminar:** quién puede cambiar movimientos anteriores (cualquier miembro activo, solo autor, propietario, etc.) y qué restricciones se aplicarán cuando un movimiento esté vinculado a una `recurring_occurrence` confirmada. No inventar una política tácita.
-
-### 7.5 Modelo relacional de recurrentes, aún sin API
-
-- `recurring_transaction`: plantilla (`day_of_month`, `start_date`, `end_date`, `active`, tipo, categoría, importe decimal, concepto).
-- `recurring_occurrence`: una ocurrencia única por `(id_recurring_transaction, period)`, con `period` al primer día de mes; estados `pending`, `confirmed`, `skipped`; instantánea de categoría/tipo/concepto/importe, y posible `id_transaction`.
-- Al confirmar: insertar movimiento y actualizar ocurrencia dentro de **una sola transacción ACID**, bloqueo de ocurrencia y verificación de estado; impedir confirmar dos veces. No reescribir ocurrencias confirmadas al cambiar plantilla; respetar fecha de inicio y mes de creación. Validar consistencia de tipo/categoría/espacio en operación, no solo FKs.
-
-## 8. Esquema, migraciones e integridad
-
-La fuente de esquema para instalaciones nuevas es `src/Database/001_initial_schema.sql` (ocho tablas: `user`, `space`, `space_member`, `space_invitation`, `category`, `financial_transaction`, `recurring_transaction`, `recurring_occurrence`). Usa FKs, claves compuestas, `CHECK`, `UNIQUE` y restricciones `RESTRICT` relevantes. **La presencia de modelos de recurrentes no significa implementación de sus endpoints.**
-
-En fase de membresías se añadió `space_member.left_at DATETIME NULL DEFAULT NULL`; para bases existentes se aplicó una migración `ALTER TABLE` y para instalaciones nuevas figura en el esquema inicial. **No se observa en la rama verificada una carpeta SQL de migraciones incrementales versionadas**; no asumir que existe un gestor automático de migraciones de la aplicación. Verificar procedimientos reales antes de cambiar esquema en producción.
-
-La tarea `php of generateModelFromDB` puede regenerar modelos. Revisar diferencias y metadatos de FKs compuestas/`CHECK` antes de aceptarlos; no sobrescribir ajustes sin inspección. `.ofw-migrations.json` pertenece al mecanismo de OFW y no debe darse por equivalente a migraciones propias de Gastos.
-
-**Eliminaciones peligrosas:** `financial_transaction` referencia a `space_member` y `category` con RESTRICT; `recurring_occurrence` referencia a movimientos y categorías. No aplicar borrado físico ni cascadas a historiales sin política explícita de conservación/anonimización.
-
-## 9. Tests y verificación
-
-Comandos del `composer.json` vigente:
+Comandos reales de `composer.json`:
 
 ```bash
 composer test
@@ -196,76 +155,76 @@ composer test:integration
 composer test:all
 ```
 
-`phpunit.xml` mantiene suites por directorio, con descubrimiento en subcarpetas. Las clases de integración heredan de `tests/Integration/OrmIntegrationTestCase.php`, que comprueba que la conexión apunta **exactamente a `gastos_test`** antes de configurar ORM.
+Unit no usa MariaDB. Integration utiliza **únicamente `gastos_test`** y las variables `GASTOS_TEST_DSN`, `GASTOS_TEST_USER`, `GASTOS_TEST_PASSWORD`; la base compartida `OrmIntegrationTestCase` verifica la conexión antes de escrituras y prepara el contexto OFW. Cada clase elimina sus registros en orden seguro para FKs. Las comprobaciones funcionales HTTP se realizan aparte. Sin errores, fallos, warnings o notices.
 
-Variables necesarias para integración: `GASTOS_TEST_DSN`, `GASTOS_TEST_USER`, `GASTOS_TEST_PASSWORD`. La base debe disponer del esquema actualizado. Los tests limpian exclusivamente sus registros, en orden que respete FKs. Nunca probar escrituras sobre una BD de producción.
+**Pruebas presentes:** autenticación y middleware; espacios/invitaciones/miembros; árbol de categorías; movimientos CRUD y paginación; plantillas recurrentes y cambios de estado; generación individual y masiva; instantáneas, meses cortos, fechas y permisos; resolución ACID y estados irreversibles; búsqueda paginada/filtrada de ocurrencias. El desarrollador ha comunicado que **todos los tests y pruebas del bloque 25 pasaron y el commit fue subido**. Esta actualización no ejecuta PHPUnit ni dispone de recuento de casos CI.
 
-**Cobertura presente (familias):** servicios de registro/autenticación; DTO/login/middleware; espacios e invitaciones/concurrencia; membresías/abandono/expulsión/reactivación; categorías y jerarquías; movimientos, importes exactos, permisos y filtros/paginación. Los tests de integración de movimientos se encuentran en `tests/Integration/Transaction/TransactionServiceIntegrationTest.php` y los DTO en `tests/Unit/Transaction/TransactionDTOTest.php`.
+Casos de mayor riesgo a continuar verificando: doble confirmación concurrente, solapamiento generación/edición/desactivación, rollback real al fallar escritura intermedia, diferentes zonas horarias entre PHP/BD y cambio de mes, y rendimiento con cientos/miles de plantillas/ocurrencias.
 
-**Última validación declarada:** el usuario ejecutó y validó tests y pruebas funcionales del bloque de filtros/paginación antes de subir `339284b`. No se dispone en este documento de log CI ni contador consolidado de casos.
+## 8. Hitos desde la continuidad anterior
 
-**Prácticas esenciales:** test unitario para DTO y lógica aislable; integración para consultas reales/transacciones/FKs/concurrencia cuando proceda; prueba HTTP funcional con JSON y estados esperados; no dar por cerrado bloque con avisos. Los tests previos podrían requerir adaptación al ampliarse el dominio, sin reducir cobertura.
+La continuidad anterior estaba anclada en `339284b` (filtros y paginación de movimientos). Desde allí se han subido:
 
-## 10. Historial de hitos desde la versión anterior
-
-| Commit abreviado | Cambio publicado |
+| Commit | Resultado |
 |---|---|
-| `fc790a9` | Consultar miembros de espacios compartidos |
-| `4227407` | Abandonar espacio, expulsar y conservar baja lógica/reactivación |
-| `2d6211e` | Crear y listar categorías por espacio |
-| `372032b` | Editar y reorganizar categorías sin ciclos |
-| `bb81610` | Eliminar categorías sin dependencias |
-| `b880f49` | Reorganización de DTO y pruebas por dominios |
-| `aced9ee` | Crear y listar ingresos/gastos |
-| **`339284b`** | **Filtros y paginación de movimientos; HEAD de referencia** |
+| `87ebbcb` | Actualización previa del documento de continuidad |
+| `5135da7` | Edición de movimientos económicos |
+| `1d6b8b2` | Eliminación segura de movimientos independientes |
+| `303f575` | Crear y listar plantillas recurrentes |
+| `256bff2` | Editar, desactivar y reactivar plantillas |
+| `e3a355e` | Generación mensual individual idempotente |
+| `d48a383` | Consultar y confirmar/omitir ocurrencias |
+| `c247b13` | Generar un mes para plantillas activas del espacio |
+| **`4f924b8`** | **Filtros y paginación de ocurrencias; HEAD verificado** |
 
-Anterior a estos hitos: autenticación, creación/listado de espacios, invitaciones y refuerzo de concurrencia, cuyo último commit de referencia del documento previo era `4376b4e` (`fix(spaces): proteger creación concurrente de invitaciones`).
+Los cambios anteriores a la continuidad previa comprenden registro/login, gestión de espacios/invitaciones, miembros, categorías y creación/listado/filtros de movimientos.
 
-## 11. Roadmap recomendado a partir de aquí
+## 9. Qué queda por hacer: roadmap prioritario
 
-### Fase 5 — Completar movimientos (prioridad inmediata)
+### Siguiente bloque recomendado — 26: informe mensual básico
 
-1. **Edición de movimientos:** contrato HTTP y DTO propios en `Transaction/`, servicio, validación de importe/tipo/fecha/categoría, permisos y protección de movimiento vinculado a recurrente. Acordar quién puede editar los movimientos de un espacio compartido y qué datos son inmutables (`id_space`, autor original, vínculo con ocurrencia).
-2. **Eliminación/política de conservación:** decidir entre borrado físico permitido para movimientos no vinculados, baja lógica o anulación; las FKs hacia ocurrencias confirmadas impiden borrados triviales. Diseñar prueba de historial y restricciones antes de implementar.
-3. **Consultas avanzadas solo si necesarias:** filtros por autor, búsqueda de texto, agregaciones, paginación escalable cuando el volumen real lo requiera. El `GET` actual ya filtra por fechas/tipo/categoría y pagina.
+Implementar un servicio de informes y un endpoint **de solo lectura** para obtener ingresos, gastos y balance de un espacio para un mes solicitado (`YYYY-MM-01`). Verificar diseño del contrato antes de codificar y seguir patrones OFW de DTO/componente/servicio. Reglas esenciales:
 
-### Fase 6 — Recurrentes y ocurrencias
+1. Requerir miembro activo y filtrar siempre por `id_space`.
+2. Agregar **exclusivamente** `financial_transaction` por `date`, independientemente de si se creó manualmente o al confirmar una recurrencia. No sumar `recurring_occurrence` para el resultado real: se duplicaría el confirmado y contaminarían el balance las pendientes.
+3. `SUM(amount)` mediante SQL `DECIMAL`, conversión y operación exactas; **nunca `float`**. Definir representación de `0.00` cuando no hay filas.
+4. Separar `income`, `expense`, `balance` y tests para mes vacío, importes exactos, varios espacios y estados de recurrentes.
+5. Verificar comportamiento y protección de endpoints HTTP; no realizar migraciones si no son necesarias.
 
-1. CRUD de plantillas recurrentes; reglas de día 1–31 y meses cortos, fechas/activación y autorización.
-2. Generación idempotente de ocurrencias mensuales, unique `(id_recurring_transaction,period)` y conservación de instantáneas.
-3. Listar pendientes/confirmadas/omitidas, resolver como confirmado u omitido en transacción; crear movimiento real al confirmar de forma atómica y asegurar doble ejecución/concurrencia.
-4. Pruebas complejas de cambios de plantilla, reintentos, fechas límite y permisos.
+### Continuación de informes
 
-### Fase 7 — Informes
+- Desglose por categorías, respetando árbol y tipo; decidir si agrupar por hoja o incluir agregados de padres sin doble contabilizar.
+- Evolución/comparación entre meses y periodos; filtros y paginación/limitaciones según necesidad real.
+- Previsiones en endpoint/estructura **separados** de contabilidad real; distinguir estimado (`pending`) y confirmado (`financial_transaction`), sin duplicados.
+- Considerar representación de saldos acumulados y límites de consulta.
 
-- Totales de ingresos/gastos por mes, saldo, desglose por categoría, periodos y comparativas.
-- Previsiones que distingan transacciones confirmadas y ocurrencias pendientes, sin doble contabilización.
-- Importes agregados calculados con `DECIMAL` o aritmética exacta, nunca con `float`.
+### Hardening / release
 
-### Fase 8 — Hardening y documentación
+- Pruebas de concurrencia reales con conexiones simultáneas; reevaluar generación masiva ante cambios concurrentes (es por plantilla, no globalmente atómica).
+- Decidir automatización/calendario de generación: actualmente la generación es **explícita** por HTTP, no un cron documentado ni algo automático. Aclarar políticas para pausas/reactivaciones (no se conserva el historial completo de activación).
+- Revisión de índices y consultas de listados grandes (`GET /recurring` aún devuelve todas las plantillas; `getBySpace()` de ocurrencias sigue existiendo sin paginación para uso interno).
+- Contratos de error, seguridad, cambios de esquema/migraciones, despliegue, ejemplos HTTP y guía de instalación; actualizar README (su apartado «Estado del proyecto» está desfasado: declara como futura funcionalidad lo ya implementado).
+- Pruebas e2e, estrategia de releases, datos de ejemplo y política de actualización de instalaciones existentes.
 
-- Repasar permisos sistemáticos y errores HTTP/JSON, límites de consulta, carga, SQL e índices, concurrencia y protección ante carreras.
-- Completar ejemplos contractuales en documentación, guía de migraciones y despliegue seguro; verificar README frente a estado real.
-- Pruebas end-to-end y estrategia de release/instalación autoalojable.
+### Decisiones de producto/arquitectura abiertas
 
-### Decisiones aún abiertas
+- Historial/auditoría o reversión de borrados físicos de movimientos independientes; actualmente no hay papelera.
+- Transferencia de propiedad, salida del dueño y eliminación/anonimización de cuentas con historial.
+- Registro completo de entradas/salidas de miembros, más allá de la fila `left_at` reactivable.
+- Reactivación de plantillas con historial de periodos pausados: el esquema no permite reconstruir exactamente pausas anteriores.
+- Política de generación futura/retroactiva y eventual scheduler (no inventar un job automático).
+- Edición/ajuste de una ocurrencia pendiente frente a modificar la plantilla: hoy la instantánea se conserva; requerirá una decisión específica.
+- Escalabilidad futura del lote y consistencia de los contadores bajo actualizaciones concurrentes.
+- Autenticación y gestión de cuenta ampliada (perfil, contraseña y opciones de usuario) fuera del alcance inicial.
 
-- Política fina de edición/autoría de movimientos en espacios compartidos.
-- Eliminación/anulación de transacciones y efecto sobre recurrentes confirmados.
-- Transferencia de propiedad y posible baja del propietario; no implementada.
-- Auditoría de entradas/salidas históricas de miembros: `left_at` reutiliza fila y no mantiene todos los períodos.
-- Tratamiento de borrado/anonimización de cuentas y espacios con historial.
-- Gestión de perfil/cambio de contraseña y funcionalidades de mantenimiento de usuario.
-- Política de acceso a listado de miembros y visibilidad de direcciones de correo (actualmente listado restringido a propietario y sin necesidad de exponer email).
+## 10. Cómo retomar desde una conversación nueva
 
-## 12. Protocolo para iniciar una conversación nueva
+Mensaje orientativo:
 
-Copiar este mensaje de arranque y acompañarlo del enlace o archivo:
+> Estamos desarrollando el backend **ApiGastos** (`https://github.com/igorosabel/ApiGastos`) de la aplicación Gastos. Lee **primero** `AGENTS.md`, `docs/development/CONTINUIDAD_APIGASTOS.md` y `docs/development/{ofw-patterns,testing}.md`, y consulta el HEAD y el código actual. La última referencia verificada es `4f924b8554` del 15/10/2026: ya están terminados autenticación inicial, espacios, invitaciones, miembros, categorías, CRUD de movimientos, plantillas recurrentes, generación individual/por espacio, resolución y búsqueda paginada de ocurrencias. El siguiente bloque previsto es el **informe mensual de ingresos, gastos y balance**, calculado solo sobre `financial_transaction` con importes exactos. No supongas que el commit sigue siendo HEAD; contrástalo. Trabajamos en bloques funcionales completos con código, pruebas unitarias, integración y comprobación HTTP; yo ejecuto los tests y subo el commit antes de avanzar. El frontend Angular va separado.
 
-> Estamos desarrollando **ApiGastos** (backend OFW), repositorio `https://github.com/igorosabel/ApiGastos`. Lee primero el `AGENTS.md` vigente y `docs/development/CONTINUIDAD_APIGASTOS.md`; revisa el HEAD y el código real, no supongas que este documento sigue siendo el último estado. La referencia conocida es el commit `339284b`, con autenticación/espacios/miembros/categorías y creación/listado/filtros/paginación de movimientos implementados. Seguimos con la **edición de movimientos**, pendiente de definir los permisos y la relación con recurrentes confirmados. Quiero bloques completos, incrementales, con **todos los archivos y pruebas**, sin avanzar hasta que valide y suba el commit. Backend y frontend Angular van separados.
-
-**Pasos del asistente al retomar:** comprobar HEAD y commits posteriores; leer `AGENTS.md`, patrones, testing, `TransactionService`, DTO y componentes `Transaction`, SQL y pruebas; comparar lo pendiente con endpoints; discutir solo decisiones realmente no resueltas; preparar un bloque funcional completo con pruebas y verificación manual; esperar validación y commit; actualizar continuidad tras hitos materiales.
+**En cada reanudación:** revisar commits posteriores a `4f924b8`; leer los archivos reales de rutas y servicios afectados, modelos/esquema, DTO/componentes/tests; decidir contrato del siguiente informe sobre evidencia; proponer código y tests completos; esperar validación. No asumir que el documento sustituye a la fuente viva.
 
 ---
 
-**Fin de la fotografía — commit `339284b53fa6570b6778002546d5312c57d5c61f`, 15/10/2026.**
+**Fin de fotografía: `4f924b8554`, 15 de octubre de 2026.**
