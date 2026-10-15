@@ -1,6 +1,10 @@
 {
     "success": {{ success | bool }},
     "occurrences": [{{ list }}],
+    "total": {{ total | number }},
+    "page": {{ page | number }},
+    "page_size": {{ page_size | number }},
+    "total_pages": {{ total_pages | number }},
     "error": {{ error | plain }},
     "message": {{ message | plain }}
 }

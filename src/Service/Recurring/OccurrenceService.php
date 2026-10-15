@@ -602,4 +602,222 @@ class OccurrenceService extends OService {
 
         return $occurrence;
     }
+
+    /**
+     * Busca ocurrencias filtradas y paginadas de un espacio.
+     *
+     * Los periodos son mensualidades en formato YYYY-MM-01.
+     * Una página fuera del rango devuelve una lista vacía.
+     *
+     * @param int $space_id Espacio contable.
+     * @param int $user_id Usuario autenticado.
+     * @param string|null $status Estado opcional.
+     * @param string|null $period_from Primer periodo incluido.
+     * @param string|null $period_to Último periodo incluido.
+     * @param int|null $recurring_id Plantilla opcional.
+     * @param int $page Número de página.
+     * @param int $page_size Tamaño de página.
+     * @return array{
+     *     occurrences: list<RecurringOccurrence>,
+     *     total: int,
+     *     page: int,
+     *     page_size: int,
+     *     total_pages: int
+     * }
+     */
+    public function search(
+        int $space_id,
+        int $user_id,
+        ?string $status = null,
+        ?string $period_from = null,
+        ?string $period_to = null,
+        ?int $recurring_id = null,
+        int $page = 1,
+        int $page_size = 20
+    ): array {
+        if ($space_id <= 0 || $user_id <= 0) {
+            throw new InvalidArgumentException(
+                'Los identificadores no son válidos.'
+            );
+        }
+
+        if (
+            $status !== null &&
+            !in_array(
+                $status,
+                ['pending', 'confirmed', 'skipped'],
+                true
+            )
+        ) {
+            throw new InvalidArgumentException(
+                'El estado de la ocurrencia no es válido.'
+            );
+        }
+
+        if ($recurring_id !== null && $recurring_id <= 0) {
+            throw new InvalidArgumentException(
+                'La plantilla no es válida.'
+            );
+        }
+
+        if (
+            $page < 1 ||
+            $page > 100000 ||
+            $page_size < 1 ||
+            $page_size > 100
+        ) {
+            throw new InvalidArgumentException(
+                'Los parámetros de paginación no son válidos.'
+            );
+        }
+
+        foreach ([$period_from, $period_to] as $period) {
+            if ($period === null) {
+                continue;
+            }
+
+            $parsed = DateTimeImmutable::createFromFormat(
+                '!Y-m-d',
+                $period
+            );
+
+            if (
+                $parsed === false ||
+                $parsed->format('Y-m-d') !== $period ||
+                $parsed->format('d') !== '01'
+            ) {
+                throw new InvalidArgumentException(
+                    'El periodo debe ser el primer día de un mes válido.'
+                );
+            }
+        }
+
+        if (
+            $period_from !== null &&
+            $period_to !== null &&
+            $period_from > $period_to
+        ) {
+            throw new InvalidArgumentException(
+                'El periodo inicial no puede superar el final.'
+            );
+        }
+
+        $db = ODB::getInstance();
+
+        // La autorización se realiza antes de acceder
+        // a cualquier dato de las ocurrencias.
+        $this->requireActiveMember(
+            $db,
+            $space_id,
+            $user_id
+        );
+
+        $where = ['id_space = :space_id'];
+
+        $params = [
+            'space_id' => [$space_id, PDO::PARAM_INT]
+        ];
+
+        if ($status !== null) {
+            $where[] = 'status = :status';
+            $params['status'] = [$status, PDO::PARAM_STR];
+        }
+
+        if ($period_from !== null) {
+            $where[] = 'period >= :period_from';
+            $params['period_from'] = [
+                $period_from,
+                PDO::PARAM_STR
+            ];
+        }
+
+        if ($period_to !== null) {
+            $where[] = 'period <= :period_to';
+            $params['period_to'] = [
+                $period_to,
+                PDO::PARAM_STR
+            ];
+        }
+
+        if ($recurring_id !== null) {
+            $where[] = 'id_recurring_transaction = :recurring_id';
+            $params['recurring_id'] = [
+                $recurring_id,
+                PDO::PARAM_INT
+            ];
+        }
+
+        $where_sql = implode(' AND ', $where);
+
+        // Vincula parámetros con sus tipos originales.
+        $bind_filters = static function(
+            \PDOStatement $statement,
+            array $values
+        ): void {
+            foreach ($values as $name => [$value, $type]) {
+                $statement->bindValue(
+                    ':' . $name,
+                    $value,
+                    $type
+                );
+            }
+        };
+
+        $stmt = $db->prepare(
+            'SELECT COUNT(*)
+             FROM `recurring_occurrence`
+             WHERE ' . $where_sql
+        );
+
+        $bind_filters($stmt, $params);
+        $stmt->execute();
+
+        $total = (int) $stmt->fetchColumn();
+
+        $offset = ($page - 1) * $page_size;
+
+        $stmt = $db->prepare(
+            'SELECT id, id_space, id_recurring_transaction,
+                    period, scheduled_date, status,
+                    id_category, type, concept, amount,
+                    id_transaction, resolved_at
+             FROM `recurring_occurrence`
+             WHERE ' . $where_sql . '
+             ORDER BY scheduled_date DESC, id DESC
+             LIMIT :page_size OFFSET :offset'
+        );
+
+        $bind_filters($stmt, $params);
+        $stmt->bindValue(
+            ':page_size',
+            $page_size,
+            PDO::PARAM_INT
+        );
+        $stmt->bindValue(
+            ':offset',
+            $offset,
+            PDO::PARAM_INT
+        );
+
+        $stmt->execute();
+
+        $occurrences = [];
+
+        while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $occurrences[] = $this->hydrateOccurrence($row);
+        }
+
+        return [
+            'occurrences' => $occurrences,
+            'total' => $total,
+            'page' => $page,
+            'page_size' => $page_size,
+            'total_pages' => intdiv(
+                $total,
+                $page_size
+            ) + (
+                $total % $page_size === 0 ? 0 : 1
+            )
+        ];
+    }
 }

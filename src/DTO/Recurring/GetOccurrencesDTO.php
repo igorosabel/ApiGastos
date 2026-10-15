@@ -12,6 +12,21 @@ class GetOccurrencesDTO extends ODTO {
     #[ODTOField]
     public ?string $status = null;
 
+    #[ODTOField]
+    public ?string $periodFrom = null;
+
+    #[ODTOField]
+    public ?string $periodTo = null;
+
+    #[ODTOField]
+    public ?int $recurringId = null;
+
+    #[ODTOField]
+    public ?int $page = null;
+
+    #[ODTOField]
+    public ?int $pageSize = null;
+
     #[ODTOField(
         required: true,
         middleware: 'Login',

@@ -758,6 +758,328 @@ final class OccurrenceServiceIntegrationTest extends OrmIntegrationTestCase {
     }
 
     /**
+     * Comprueba los valores por defecto de búsqueda.
+     */
+    public function testSearchDefaults(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $template = $this->recurring(
+            $space_id, $owner_id, $category_id, 15
+        );
+
+        $service = new OccurrenceService();
+        $generated = $service->generate(
+            $space_id,
+            $owner_id,
+            $template->id,
+            $this->currentPeriod()
+        );
+
+        $result = $service->search($space_id, $owner_id);
+
+        $this->assertSame(1, $result['total']);
+        $this->assertSame(1, $result['page']);
+        $this->assertSame(20, $result['page_size']);
+        $this->assertSame(1, $result['total_pages']);
+        $this->assertCount(1, $result['occurrences']);
+        $this->assertSame(
+            $generated['occurrence']->id,
+            $result['occurrences'][0]->id
+        );
+    }
+
+    /**
+     * Comprueba páginas y orden estable cuando varias
+     * ocurrencias comparten fecha programada.
+     */
+    public function testSearchPaginationAndOrdering(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $service = new OccurrenceService();
+        $period = $this->currentPeriod();
+        $ids = [];
+
+        for ($i = 0; $i < 5; $i++) {
+            $template = $this->recurring(
+                $space_id,
+                $owner_id,
+                $category_id,
+                15
+            );
+
+            $generated = $service->generate(
+                $space_id,
+                $owner_id,
+                $template->id,
+                $period
+            );
+
+            $ids[] = $generated['occurrence']->id;
+        }
+
+        $first = $service->search(
+            $space_id, $owner_id,
+            page: 1, page_size: 2
+        );
+
+        $second = $service->search(
+            $space_id, $owner_id,
+            page: 2, page_size: 2
+        );
+
+        $third = $service->search(
+            $space_id, $owner_id,
+            page: 3, page_size: 2
+        );
+
+        $this->assertSame(5, $first['total']);
+        $this->assertSame(3, $first['total_pages']);
+
+        $extract_ids = static fn(array $list): array =>
+            array_map(
+                static fn($item): ?int => $item->id,
+                $list
+            );
+
+        $this->assertSame(
+            [$ids[4], $ids[3]],
+            $extract_ids($first['occurrences'])
+        );
+        $this->assertSame(
+            [$ids[2], $ids[1]],
+            $extract_ids($second['occurrences'])
+        );
+        $this->assertSame(
+            [$ids[0]],
+            $extract_ids($third['occurrences'])
+        );
+    }
+
+    /**
+     * Comprueba filtros combinados de periodo, estado
+     * y plantilla recurrente.
+     */
+    public function testSearchCombinedFilters(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+        $next = (new DateTimeImmutable($period))
+            ->modify('+1 month')
+            ->format('Y-m-d');
+
+        $first_template = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+        $second_template = $this->recurring(
+            $space_id, $owner_id, $category_id, 20
+        );
+
+        $service = new OccurrenceService();
+
+        $expected = $service->generate(
+            $space_id, $owner_id, $first_template->id, $period
+        );
+
+        $service->generate(
+            $space_id, $owner_id, $first_template->id, $next
+        );
+
+        $other = $service->generate(
+            $space_id, $owner_id, $second_template->id, $period
+        );
+
+        $service->resolve(
+            $space_id, $owner_id,
+            $other['occurrence']->id, 'skip'
+        );
+
+        $result = $service->search(
+            $space_id,
+            $owner_id,
+            status: 'pending',
+            period_from: $period,
+            period_to: $period,
+            recurring_id: $first_template->id
+        );
+
+        $this->assertSame(1, $result['total']);
+        $this->assertSame(
+            $expected['occurrence']->id,
+            $result['occurrences'][0]->id
+        );
+        $this->assertSame(
+            'pending',
+            $result['occurrences'][0]->status
+        );
+    }
+
+    /**
+     * Una página fuera de rango devuelve lista vacía.
+     */
+    public function testSearchOutsideRange(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $template = $this->recurring(
+            $space_id, $owner_id, $category_id, 15
+        );
+
+        $service = new OccurrenceService();
+        $service->generate(
+            $space_id, $owner_id,
+            $template->id, $this->currentPeriod()
+        );
+
+        $result = $service->search(
+            $space_id, $owner_id,
+            page: 5, page_size: 1
+        );
+
+        $this->assertSame(1, $result['total']);
+        $this->assertSame(1, $result['total_pages']);
+        $this->assertSame([], $result['occurrences']);
+    }
+
+    /**
+     * Una consulta sin coincidencias conserva metadatos.
+     */
+    public function testSearchEmptyResult(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+
+        $result = (new OccurrenceService())->search(
+            $space_id, $owner_id,
+            status: 'confirmed'
+        );
+
+        $this->assertSame(0, $result['total']);
+        $this->assertSame(0, $result['total_pages']);
+        $this->assertSame(1, $result['page']);
+        $this->assertSame([], $result['occurrences']);
+    }
+
+    /**
+     * Rechaza formatos de fechas y parámetros inválidos.
+     */
+    public function testSearchInvalidFilters(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+
+        $service = new OccurrenceService();
+
+        $cases = [
+            ['status' => 'deleted'],
+            ['period_from' => '2026-10-15'],
+            ['period_from' => '2026-02-30'],
+            ['period_to' => '10/2026'],
+            [
+                'period_from' => '2026-12-01',
+                'period_to' => '2026-11-01'
+            ],
+            ['recurring_id' => 0],
+            ['page' => 0],
+            ['page' => 100001],
+            ['page_size' => 0],
+            ['page_size' => 101]
+        ];
+
+        foreach ($cases as $filters) {
+            try {
+                $service->search(
+                    $space_id,
+                    $owner_id,
+                    ...$filters
+                );
+                $this->fail(
+                    'Se ha aceptado un filtro inválido.'
+                );
+            }
+            catch (InvalidArgumentException) {
+                $this->assertFalse(
+                    $this->db->inTransaction()
+                );
+            }
+        }
+    }
+
+    /**
+     * Un usuario ajeno no puede acceder a la búsqueda.
+     */
+    public function testOutsiderCannotSearch(): void {
+        [$space_id] = $this->prepareSpace();
+        $outsider_id = $this->createUser();
+
+        $this->expectException(DomainException::class);
+
+        (new OccurrenceService())->search(
+            $space_id, $outsider_id
+        );
+    }
+
+    /**
+     * Una membresía inactiva no permite la búsqueda.
+     */
+    public function testInactiveMemberCannotSearch(): void {
+        [$space_id] = $this->prepareSpace();
+        $member_id = $this->createUser();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `space_member`
+             (id_space, id_user, left_at)
+             VALUES (?, ?, NOW())'
+        );
+
+        $stmt->execute([$space_id, $member_id]);
+
+        $this->expectException(DomainException::class);
+
+        (new OccurrenceService())->search(
+            $space_id, $member_id
+        );
+    }
+
+    /**
+     * No se mezclan ocurrencias entre espacios.
+     */
+    public function testSearchIsolatedBySpace(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        [$other_space_id, $other_owner_id, $other_category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+        $service = new OccurrenceService();
+
+        $first = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+
+        $second = $this->recurring(
+            $other_space_id, $other_owner_id,
+            $other_category_id, 10
+        );
+
+        $service->generate(
+            $space_id, $owner_id, $first->id, $period
+        );
+
+        $service->generate(
+            $other_space_id, $other_owner_id,
+            $second->id, $period
+        );
+
+        $result = $service->search($space_id, $owner_id);
+
+        $this->assertSame(1, $result['total']);
+        $this->assertSame(
+            $space_id,
+            $result['occurrences'][0]->id_space
+        );
+    }
+
+    /**
      * Cuenta los movimientos reales registrados en un espacio.
      *
      * @param int $space_id Espacio.
