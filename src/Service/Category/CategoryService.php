@@ -2,11 +2,13 @@
 
 namespace Osumi\OsumiFramework\App\Service\Category;
 
+use PDO;
+use Throwable;
 use DomainException;
 use InvalidArgumentException;
 use RuntimeException;
-use PDO;
-use Throwable;
+use LogicException;
+use PDOException;
 use Osumi\OsumiFramework\App\Model\Category;
 use Osumi\OsumiFramework\App\Model\SpaceMember;
 use Osumi\OsumiFramework\Core\OService;
@@ -347,6 +349,166 @@ class CategoryService extends OService {
             $category->sort_order = (int) $stored['sort_order'];
 
             return $category;
+        }
+        catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Elimina una categoría sin hijos ni referencias económicas.
+     *
+     * @param int $space_id Identificador del espacio.
+     * @param int $user_id Usuario autenticado.
+     * @param int $category_id Categoría que se eliminará.
+     * @return void
+     */
+    public function delete(
+        int $space_id,
+        int $user_id,
+        int $category_id
+    ): void {
+        if (
+            $space_id <= 0 ||
+            $user_id <= 0 ||
+            $category_id <= 0
+        ) {
+            throw new InvalidArgumentException(
+                'Los identificadores no son válidos.'
+            );
+        }
+
+        $db = ODB::getInstance();
+
+        if (!$db->beginTransaction()) {
+            throw new RuntimeException(
+                'No se ha podido iniciar la transacción.'
+            );
+        }
+
+        try {
+            // Serializamos las modificaciones del espacio.
+            $stmt = $db->prepare(
+                'SELECT id FROM `space`
+                 WHERE id = :id
+                 FOR UPDATE'
+            );
+            $stmt->execute(['id' => $space_id]);
+
+            if ($stmt->fetch(PDO::FETCH_ASSOC) === false) {
+                throw new DomainException(
+                    'No tienes acceso a este espacio.'
+                );
+            }
+
+            // Consultamos la pertenencia activa directamente
+            // para no depender de la caché del ORM.
+            $stmt = $db->prepare(
+                'SELECT id FROM `space_member`
+                 WHERE id_space = :space_id
+                   AND id_user = :user_id
+                   AND left_at IS NULL
+                 LIMIT 1'
+            );
+            $stmt->execute([
+                'space_id' => $space_id,
+                'user_id' => $user_id
+            ]);
+
+            if ($stmt->fetch(PDO::FETCH_ASSOC) === false) {
+                throw new DomainException(
+                    'No tienes acceso a este espacio.'
+                );
+            }
+
+            $stmt = $db->prepare(
+                'SELECT id FROM `category`
+                 WHERE id = :category_id
+                   AND id_space = :space_id
+                 FOR UPDATE'
+            );
+            $stmt->execute([
+                'category_id' => $category_id,
+                'space_id' => $space_id
+            ]);
+
+            if ($stmt->fetch(PDO::FETCH_ASSOC) === false) {
+                throw new InvalidArgumentException(
+                    'La categoría no pertenece al espacio.'
+                );
+            }
+
+            // Comprobamos todas las dependencias conocidas.
+            $dependencies = [
+                ['category', 'id_parent'],
+                ['financial_transaction', 'id_category'],
+                ['recurring_transaction', 'id_category'],
+                ['recurring_occurrence', 'id_category']
+            ];
+
+            foreach ($dependencies as [$table, $column]) {
+                // Tabla y columna proceden exclusivamente de
+                // esta lista fija, nunca de datos del cliente.
+                $stmt = $db->prepare(
+                    "SELECT id FROM `{$table}`
+                     WHERE id_space = :space_id
+                       AND `{$column}` = :category_id
+                     LIMIT 1"
+                );
+
+                $stmt->execute([
+                    'space_id' => $space_id,
+                    'category_id' => $category_id
+                ]);
+
+                if ($stmt->fetch(PDO::FETCH_ASSOC) !== false) {
+                    throw new LogicException(
+                        'La categoría tiene elementos asociados y no puede eliminarse.'
+                    );
+                }
+            }
+
+            $stmt = $db->prepare(
+                'DELETE FROM `category`
+                 WHERE id = :category_id
+                   AND id_space = :space_id'
+            );
+
+            try {
+                $stmt->execute([
+                    'category_id' => $category_id,
+                    'space_id' => $space_id
+                ]);
+            }
+            catch (PDOException $e) {
+                // Una dependencia creada concurrentemente
+                // puede ser detectada por la propia FK.
+                if ($e->getCode() === '23000') {
+                    throw new LogicException(
+                        'La categoría tiene elementos asociados y no puede eliminarse.',
+                        0,
+                        $e
+                    );
+                }
+
+                throw $e;
+            }
+
+            if ($stmt->rowCount() !== 1) {
+                throw new RuntimeException(
+                    'No se ha podido eliminar la categoría.'
+                );
+            }
+
+            if (!$db->commit()) {
+                throw new RuntimeException(
+                    'No se ha podido confirmar la eliminación.'
+                );
+            }
         }
         catch (Throwable $e) {
             if ($db->inTransaction()) {
