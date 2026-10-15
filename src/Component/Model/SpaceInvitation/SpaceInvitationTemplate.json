@@ -1,0 +1,10 @@
+{
+    "id": {{ invitation.id | number }},
+    "space_id": {{ invitation.id_space | number }},
+    "email": {{ invitation.email | plain }},
+    "invited_by": {{ invitation.invited_by | number }},
+    "expires_at": {{ invitation.expires_at | plain }},
+    "accepted_at": {{ invitation.accepted_at | plain }},
+    "revoked_at": {{ invitation.revoked_at | plain }},
+    "status": {{ status | plain }}
+}

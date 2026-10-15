@@ -1,0 +1,6 @@
+{
+    "success": {{ success | bool }},
+    "invitations": [{{ list }}],
+    "error": {{ error | plain }},
+    "message": {{ message | plain }}
+}

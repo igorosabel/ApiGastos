@@ -258,4 +258,149 @@ class SpaceInvitationService extends OService {
             throw $e;
         }
     }
+
+    /**
+     * Comprueba que el usuario es propietario de un espacio compartido.
+     *
+     * @param int $space_id Identificador del espacio.
+     * @param int $user_id Usuario autenticado.
+     * @return Space Espacio autorizado.
+     */
+    private function requireSharedSpaceOwner(
+        int $space_id,
+        int $user_id
+    ): Space {
+        if ($space_id <= 0 || $user_id <= 0) {
+            throw new InvalidArgumentException(
+                'Los identificadores no son válidos.'
+            );
+        }
+
+        $space = Space::findOne(['id' => $space_id]);
+
+        if (
+            $space === null ||
+            $space->type !== 'shared' ||
+            $space->owner_id !== $user_id
+        ) {
+            throw new DomainException(
+                'No tienes permiso para administrar estas invitaciones.'
+            );
+        }
+
+        return $space;
+    }
+
+    /**
+     * Devuelve las invitaciones de un espacio compartido.
+     *
+     * @param int $space_id Identificador del espacio.
+     * @param int $user_id Propietario autenticado.
+     * @return list<SpaceInvitation> Invitaciones del espacio.
+     */
+    public function getBySpace(int $space_id, int $user_id): array {
+        $this->requireSharedSpaceOwner($space_id, $user_id);
+
+        return SpaceInvitation::where(
+            ['id_space' => $space_id],
+            ['order_by' => 'created_at#DESC']
+        );
+    }
+
+    /**
+     * Revoca una invitación pendiente.
+     *
+     * @param int $invitation_id Identificador de la invitación.
+     * @param int $user_id Propietario autenticado.
+     * @return SpaceInvitation Invitación revocada.
+     */
+    public function revoke(int $invitation_id, int $user_id): SpaceInvitation {
+        if ($invitation_id <= 0 || $user_id <= 0) {
+            throw new InvalidArgumentException(
+                'Los identificadores no son válidos.'
+            );
+        }
+
+        $db = ODB::getInstance();
+
+        if (!$db->beginTransaction()) {
+            throw new RuntimeException(
+                'No se ha podido iniciar la transacción.'
+            );
+        }
+
+        try {
+            $stmt = $db->prepare(
+                'SELECT id, id_space, accepted_at, revoked_at, expires_at
+                 FROM `space_invitation`
+                 WHERE id = :id
+                 FOR UPDATE'
+            );
+
+            if (
+                $stmt === false ||
+                !$stmt->execute(['id' => $invitation_id])
+            ) {
+                throw new RuntimeException(
+                    'No se ha podido consultar la invitación.'
+                );
+            }
+
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!is_array($row)) {
+                throw new DomainException(
+                    'No tienes permiso para administrar esta invitación.'
+                );
+            }
+
+            $this->requireSharedSpaceOwner(
+                (int) $row['id_space'],
+                $user_id
+            );
+
+            if (
+                $row['accepted_at'] !== null ||
+                $row['revoked_at'] !== null ||
+                strtotime($row['expires_at']) <= time()
+            ) {
+                throw new LogicException(
+                    'La invitación ya no está pendiente.'
+                );
+            }
+
+            $invitation = SpaceInvitation::findOne([
+                'id' => $invitation_id
+            ]);
+
+            if ($invitation === null) {
+                throw new LogicException(
+                    'La invitación no está disponible.'
+                );
+            }
+
+            $invitation->revoked_at = date('Y-m-d H:i:s');
+
+            if (!$invitation->save()) {
+                throw new RuntimeException(
+                    'No se ha podido revocar la invitación.'
+                );
+            }
+
+            if (!$db->commit()) {
+                throw new RuntimeException(
+                    'No se ha podido confirmar la revocación.'
+                );
+            }
+
+            return $invitation;
+        }
+        catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+
+            throw $e;
+        }
+    }
 }
