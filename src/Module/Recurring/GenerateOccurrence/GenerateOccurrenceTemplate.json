@@ -1,0 +1,7 @@
+{
+    "success": {{ success | bool }},
+    "created": {{ created | bool }},
+    "occurrence": {{ occurrence }},
+    "error": {{ error | plain }},
+    "message": {{ message | plain }}
+}

@@ -1,0 +1,15 @@
+
+{
+    "id": {{ occurrence.id | number }},
+    "space_id": {{ occurrence.id_space | number }},
+    "recurring_id": {{ occurrence.id_recurring_transaction | number }},
+    "period": {{ occurrence.period | plain }},
+    "scheduled_date": {{ occurrence.scheduled_date | plain }},
+    "status": {{ occurrence.status | plain }},
+    "category_id": {{ occurrence.id_category | number }},
+    "type": {{ occurrence.type | plain }},
+    "concept": {{ occurrence.concept | plain }},
+    "amount": {{ occurrence.amount | plain }},
+    "transaction_id": {{ occurrence.id_transaction | number }},
+    "resolved_at": {{ occurrence.resolved_at | plain }}
+}
