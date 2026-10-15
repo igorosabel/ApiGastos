@@ -12,6 +12,7 @@ use Osumi\OsumiFramework\App\Module\Recurring\SetRecurringStatus\SetRecurringSta
 use Osumi\OsumiFramework\App\Module\Recurring\GenerateOccurrence\GenerateOccurrenceComponent;
 use Osumi\OsumiFramework\App\Module\Recurring\GetOccurrences\GetOccurrencesComponent;
 use Osumi\OsumiFramework\App\Module\Recurring\ResolveOccurrence\ResolveOccurrenceComponent;
+use Osumi\OsumiFramework\App\Module\Recurring\GenerateSpaceOccurrences\GenerateSpaceOccurrencesComponent;
 
 ORoute::prefix('/recurring', function(): void {
     ORoute::get('', GetRecurringComponent::class, [
@@ -55,4 +56,14 @@ ORoute::prefix('/recurring', function(): void {
             LoginMiddleware::class
         ]
     ]);
+
+    ORoute::post(
+        '/generate-space',
+        GenerateSpaceOccurrencesComponent::class,
+        [
+            OMiddleware::PHASE_BEFORE => [
+                LoginMiddleware::class
+            ]
+        ]
+    );
 });

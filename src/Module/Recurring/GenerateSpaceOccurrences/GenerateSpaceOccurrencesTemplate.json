@@ -1,0 +1,9 @@
+{
+    "success": {{ success | bool }},
+    "created": {{ created | number }},
+    "existing": {{ existing | number }},
+    "skipped": {{ skipped | number }},
+    "total": {{ total | number }},
+    "error": {{ error | plain }},
+    "message": {{ message | plain }}
+}
