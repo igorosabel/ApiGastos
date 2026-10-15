@@ -2,15 +2,16 @@
 
 namespace Osumi\OsumiFramework\App\Service\Transaction;
 
+use PDO;
+use Throwable;
 use DateTimeImmutable;
 use DomainException;
 use InvalidArgumentException;
+use LogicException;
+use RuntimeException;
 use Osumi\OsumiFramework\App\Model\FinancialTransaction;
 use Osumi\OsumiFramework\Core\OService;
 use Osumi\OsumiFramework\ORM\ODB;
-use PDO;
-use RuntimeException;
-use Throwable;
 
 class TransactionService extends OService {
     /**
@@ -448,5 +449,286 @@ class TransactionService extends OService {
             'page_size' => $page_size,
             'total_pages' => (int) ceil($total / $page_size)
         ];
+    }
+
+    /**
+     * Corrige los datos económicos de un movimiento existente.
+     *
+     * Conserva el espacio y el autor originales, y rechaza
+     * movimientos vinculados a ocurrencias recurrentes.
+     *
+     * @param int $space_id Espacio contable.
+     * @param int $user_id Usuario que solicita la edición.
+     * @param int $transaction_id Movimiento que se editará.
+     * @param int $category_id Nueva categoría.
+     * @param string $type Nuevo tipo.
+     * @param string $amount Nuevo importe decimal.
+     * @param string|null $concept Nuevo concepto.
+     * @param string $date Nueva fecha.
+     * @return FinancialTransaction Movimiento actualizado.
+     */
+    public function update(
+        int $space_id,
+        int $user_id,
+        int $transaction_id,
+        int $category_id,
+        string $type,
+        string $amount,
+        ?string $concept,
+        string $date
+    ): FinancialTransaction {
+        if (
+            $space_id <= 0 ||
+            $user_id <= 0 ||
+            $transaction_id <= 0 ||
+            $category_id <= 0
+        ) {
+            throw new InvalidArgumentException(
+                'Los identificadores no son válidos.'
+            );
+        }
+
+        if (!in_array($type, ['expense', 'income'], true)) {
+            throw new InvalidArgumentException(
+                'El tipo de movimiento no es válido.'
+            );
+        }
+
+        if (
+            preg_match(
+                '/^(?:0|[1-9][0-9]{0,9})\.[0-9]{2}$/D',
+                $amount
+            ) !== 1 ||
+            preg_match('/[1-9]/', $amount) !== 1
+        ) {
+            throw new InvalidArgumentException(
+                'El importe debe ser positivo y tener dos decimales.'
+            );
+        }
+
+        $concept = $concept === null ? null : trim($concept);
+
+        if ($concept !== null) {
+            if (mb_strlen($concept) > 255) {
+                throw new InvalidArgumentException(
+                    'El concepto no puede superar los 255 caracteres.'
+                );
+            }
+
+            if ($concept === '') {
+                $concept = null;
+            }
+        }
+
+        $parsed_date = DateTimeImmutable::createFromFormat(
+            '!Y-m-d',
+            $date
+        );
+
+        if (
+            $parsed_date === false ||
+            $parsed_date->format('Y-m-d') !== $date
+        ) {
+            throw new InvalidArgumentException(
+                'La fecha del movimiento no es válida.'
+            );
+        }
+
+        $db = ODB::getInstance();
+
+        if (!$db->beginTransaction()) {
+            throw new RuntimeException(
+                'No se ha podido iniciar la transacción.'
+            );
+        }
+
+        try {
+            // Mismo bloqueo que las bajas de miembros y
+            // la creación de movimientos.
+            $stmt = $db->prepare(
+                'SELECT id FROM `space`
+                 WHERE id = :space_id
+                 FOR UPDATE'
+            );
+            $stmt->execute(['space_id' => $space_id]);
+
+            if ($stmt->fetch(PDO::FETCH_ASSOC) === false) {
+                throw new DomainException(
+                    'No tienes acceso a este espacio.'
+                );
+            }
+
+            // Autorización actual, dentro de la transacción.
+            $stmt = $db->prepare(
+                'SELECT id FROM `space_member`
+                 WHERE id_space = :space_id
+                   AND id_user = :user_id
+                   AND left_at IS NULL
+                 LIMIT 1'
+            );
+            $stmt->execute([
+                'space_id' => $space_id,
+                'user_id' => $user_id
+            ]);
+
+            if ($stmt->fetch(PDO::FETCH_ASSOC) === false) {
+                throw new DomainException(
+                    'No tienes acceso a este espacio.'
+                );
+            }
+
+            // Bloqueamos el movimiento que vamos a modificar.
+            $stmt = $db->prepare(
+                'SELECT id, id_user
+                 FROM `financial_transaction`
+                 WHERE id = :transaction_id
+                   AND id_space = :space_id
+                 FOR UPDATE'
+            );
+            $stmt->execute([
+                'transaction_id' => $transaction_id,
+                'space_id' => $space_id
+            ]);
+
+            $current = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!is_array($current)) {
+                throw new InvalidArgumentException(
+                    'El movimiento no pertenece al espacio.'
+                );
+            }
+
+            // No permitimos modificar movimientos vinculados
+            // a ocurrencias recurrentes.
+            $stmt = $db->prepare(
+                'SELECT id FROM `recurring_occurrence`
+                 WHERE id_space = :space_id
+                   AND id_transaction = :transaction_id
+                 LIMIT 1'
+            );
+            $stmt->execute([
+                'space_id' => $space_id,
+                'transaction_id' => $transaction_id
+            ]);
+
+            if ($stmt->fetch(PDO::FETCH_ASSOC) !== false) {
+                throw new LogicException(
+                    'No se puede editar un movimiento vinculado a una ocurrencia recurrente.'
+                );
+            }
+
+            // Validamos la categoría sin permitir cruces
+            // entre espacios o tipos incompatibles.
+            $stmt = $db->prepare(
+                'SELECT default_type FROM `category`
+                 WHERE id = :category_id
+                   AND id_space = :space_id'
+            );
+            $stmt->execute([
+                'category_id' => $category_id,
+                'space_id' => $space_id
+            ]);
+
+            $category_type = $stmt->fetchColumn();
+
+            if (
+                $category_type === false ||
+                $category_type !== $type
+            ) {
+                throw new InvalidArgumentException(
+                    'La categoría no pertenece al espacio o tiene otro tipo.'
+                );
+            }
+
+            $stmt = $db->prepare(
+                'UPDATE `financial_transaction`
+                 SET id_category = :category_id,
+                     type = :type,
+                     amount = :amount,
+                     concept = :concept,
+                     `date` = :date
+                 WHERE id = :transaction_id
+                   AND id_space = :space_id'
+            );
+
+            $stmt->bindValue(
+                ':category_id',
+                $category_id,
+                PDO::PARAM_INT
+            );
+            $stmt->bindValue(':type', $type, PDO::PARAM_STR);
+            $stmt->bindValue(':amount', $amount, PDO::PARAM_STR);
+            $stmt->bindValue(
+                ':concept',
+                $concept,
+                $concept === null
+                    ? PDO::PARAM_NULL
+                    : PDO::PARAM_STR
+            );
+            $stmt->bindValue(':date', $date, PDO::PARAM_STR);
+            $stmt->bindValue(
+                ':transaction_id',
+                $transaction_id,
+                PDO::PARAM_INT
+            );
+            $stmt->bindValue(
+                ':space_id',
+                $space_id,
+                PDO::PARAM_INT
+            );
+
+            if (!$stmt->execute()) {
+                throw new RuntimeException(
+                    'No se ha podido actualizar el movimiento.'
+                );
+            }
+
+            if (!$db->commit()) {
+                throw new RuntimeException(
+                    'No se ha podido confirmar la actualización.'
+                );
+            }
+
+            // Recuperamos los valores persistidos para
+            // devolver una representación precisa.
+            $stmt = $db->prepare(
+                'SELECT id, id_space, id_user, id_category,
+                        type, amount, concept, date
+                 FROM `financial_transaction`
+                 WHERE id = :transaction_id
+                   AND id_space = :space_id'
+            );
+            $stmt->execute([
+                'transaction_id' => $transaction_id,
+                'space_id' => $space_id
+            ]);
+
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!is_array($row)) {
+                throw new RuntimeException(
+                    'No se ha podido recuperar el movimiento.'
+                );
+            }
+
+            $transaction = new FinancialTransaction();
+            $transaction->id = (int) $row['id'];
+            $transaction->id_space = (int) $row['id_space'];
+            $transaction->id_user = (int) $row['id_user'];
+            $transaction->id_category = (int) $row['id_category'];
+            $transaction->type = $row['type'];
+            $transaction->amount = (string) $row['amount'];
+            $transaction->concept = $row['concept'];
+            $transaction->date = $row['date'];
+
+            return $transaction;
+        }
+        catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+
+            throw $e;
+        }
     }
 }

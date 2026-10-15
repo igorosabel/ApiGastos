@@ -15,6 +15,10 @@ final class TransactionServiceIntegrationTest extends OrmIntegrationTestCase {
 
     /**
      * Limpia los datos exclusivos de cada prueba.
+     *
+     * El orden respeta todas las claves foráneas:
+     * ocurrencias, plantillas, movimientos, categorías,
+     * membresías, espacios y usuarios.
      */
     protected function tearDown(): void {
         try {
@@ -24,6 +28,8 @@ final class TransactionServiceIntegrationTest extends OrmIntegrationTestCase {
 
             foreach (array_reverse($this->spaces) as $space_id) {
                 foreach ([
+                    'recurring_occurrence',
+                    'recurring_transaction',
                     'financial_transaction',
                     'category',
                     'space_member'
@@ -633,6 +639,358 @@ final class TransactionServiceIntegrationTest extends OrmIntegrationTestCase {
             $space_id,
             $guest_id
         );
+    }
+
+    /**
+     * Comprueba la actualización de los campos económicos
+     * sin alterar la identidad original del movimiento.
+     */
+    public function testUpdateTransactionPreservesIdentity(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $expense_id = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+        $income_id = $this->category(
+            $space_id, $owner_id, 'income'
+        );
+
+        $service = new TransactionService();
+
+        $original = $service->create(
+            $space_id, $owner_id, $expense_id,
+            'expense', '49.95', ' Compra ',
+            '2026-10-01'
+        );
+
+        $updated = $service->update(
+            $space_id, $owner_id, $original->id,
+            $income_id, 'income', '1250.75',
+            '  Ingreso corregido  ', '2026-10-15'
+        );
+
+        $this->assertSame($original->id, $updated->id);
+        $this->assertSame($owner_id, $updated->id_user);
+        $this->assertSame($space_id, $updated->id_space);
+        $this->assertSame($income_id, $updated->id_category);
+        $this->assertSame('income', $updated->type);
+        $this->assertSame('1250.75', $updated->amount);
+        $this->assertSame('Ingreso corregido', $updated->concept);
+        $this->assertSame('2026-10-15', $updated->date);
+        $this->assertFalse($this->db->inTransaction());
+
+        $stmt = $this->db->prepare(
+            'SELECT id_user, id_space, amount
+             FROM `financial_transaction`
+             WHERE id = ?'
+        );
+        $stmt->execute([$original->id]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        $this->assertIsArray($row);
+        $this->assertSame($owner_id, (int) $row['id_user']);
+        $this->assertSame($space_id, (int) $row['id_space']);
+        $this->assertSame('1250.75', $row['amount']);
+    }
+
+    /**
+     * Comprueba que otro miembro activo puede corregir
+     * un movimiento sin convertirse en su autor.
+     */
+    public function testActiveMemberCanUpdateAnotherUsersTransaction(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $other_user_id = $this->createUser();
+        $category_id = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `space_member` (id_space, id_user)
+             VALUES (?, ?)'
+        );
+        $stmt->execute([$space_id, $other_user_id]);
+
+        $service = new TransactionService();
+
+        $original = $service->create(
+            $space_id, $owner_id, $category_id,
+            'expense', '10.00', null, '2026-10-01'
+        );
+
+        $updated = $service->update(
+            $space_id, $other_user_id, $original->id,
+            $category_id, 'expense', '11.00',
+            'Corregido', '2026-10-02'
+        );
+
+        $this->assertSame($owner_id, $updated->id_user);
+        $this->assertSame('11.00', $updated->amount);
+    }
+
+    /**
+     * Comprueba que el acceso ajeno es rechazado.
+     */
+    public function testOutsiderCannotUpdateTransaction(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $outsider_id = $this->createUser();
+        $category_id = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+
+        $service = new TransactionService();
+        $original = $service->create(
+            $space_id, $owner_id, $category_id,
+            'expense', '10.00', null, '2026-10-15'
+        );
+
+        $this->expectException(DomainException::class);
+
+        $service->update(
+            $space_id, $outsider_id, $original->id,
+            $category_id, 'expense', '20.00',
+            null, '2026-10-15'
+        );
+    }
+
+    /**
+     * Comprueba que una baja revoca los permisos de edición.
+     */
+    public function testInactiveMemberCannotUpdateTransaction(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $other_user_id = $this->createUser();
+        $category_id = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `space_member`
+             (id_space, id_user, left_at)
+             VALUES (?, ?, NOW())'
+        );
+        $stmt->execute([$space_id, $other_user_id]);
+
+        $service = new TransactionService();
+        $original = $service->create(
+            $space_id, $owner_id, $category_id,
+            'expense', '10.00', null, '2026-10-15'
+        );
+
+        $this->expectException(DomainException::class);
+
+        $service->update(
+            $space_id, $other_user_id, $original->id,
+            $category_id, 'expense', '20.00',
+            null, '2026-10-15'
+        );
+    }
+
+    /**
+     * Comprueba que un movimiento no puede modificarse
+     * indicando un espacio diferente.
+     */
+    public function testCannotUpdateTransactionFromAnotherSpace(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        [$other_space_id, $other_owner_id] = $this->prepareSpace();
+
+        $category_id = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+        $other_category_id = $this->category(
+            $other_space_id, $other_owner_id, 'expense'
+        );
+
+        $service = new TransactionService();
+
+        $original = $service->create(
+            $other_space_id, $other_owner_id,
+            $other_category_id, 'expense',
+            '10.00', null, '2026-10-15'
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+
+        $service->update(
+            $space_id, $owner_id, $original->id,
+            $category_id, 'expense', '20.00',
+            null, '2026-10-15'
+        );
+    }
+
+    /**
+     * Comprueba que no se permite usar una categoría
+     * de tipo incompatible.
+     */
+    public function testUpdateRejectsCategoryTypeMismatch(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $expense_id = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+        $income_id = $this->category(
+            $space_id, $owner_id, 'income'
+        );
+
+        $service = new TransactionService();
+        $original = $service->create(
+            $space_id, $owner_id, $expense_id,
+            'expense', '10.00', null, '2026-10-15'
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+
+        $service->update(
+            $space_id, $owner_id, $original->id,
+            $income_id, 'expense', '20.00',
+            null, '2026-10-15'
+        );
+    }
+
+    /**
+     * Comprueba que los formatos monetarios inválidos
+     * nunca se persisten.
+     */
+    public function testUpdateRejectsInvalidAmounts(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $category_id = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+
+        $service = new TransactionService();
+        $original = $service->create(
+            $space_id, $owner_id, $category_id,
+            'expense', '10.00', null, '2026-10-15'
+        );
+
+        foreach (['0.00', '-1.00', '1.234', '1e3', '1,25'] as $amount) {
+            try {
+                $service->update(
+                    $space_id, $owner_id, $original->id,
+                    $category_id, 'expense', $amount,
+                    null, '2026-10-15'
+                );
+                $this->fail("Importe inválido admitido: {$amount}");
+            }
+            catch (InvalidArgumentException) {
+                $this->assertFalse($this->db->inTransaction());
+            }
+        }
+
+        $stmt = $this->db->prepare(
+            'SELECT amount FROM `financial_transaction`
+             WHERE id = ?'
+        );
+        $stmt->execute([$original->id]);
+
+        $this->assertSame('10.00', $stmt->fetchColumn());
+    }
+
+    /**
+     * Comprueba que las fechas inexistentes son rechazadas.
+     */
+    public function testUpdateRejectsInvalidDate(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $category_id = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+
+        $service = new TransactionService();
+        $original = $service->create(
+            $space_id, $owner_id, $category_id,
+            'expense', '10.00', null, '2026-10-15'
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+
+        $service->update(
+            $space_id, $owner_id, $original->id,
+            $category_id, 'expense', '20.00',
+            null, '2026-02-30'
+        );
+    }
+
+    /**
+     * Comprueba que un movimiento vinculado a una
+     * ocurrencia confirmada no puede editarse.
+     */
+    public function testConfirmedRecurringTransactionCannotBeUpdated(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $category_id = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+
+        $service = new TransactionService();
+
+        $transaction = $service->create(
+            $space_id, $owner_id, $category_id,
+            'expense', '75.00', 'Alquiler',
+            '2026-10-15'
+        );
+
+        // Preparamos una plantilla recurrente directamente
+        // en gastos_test, sin depender de una API aún inexistente.
+        $stmt = $this->db->prepare(
+            'INSERT INTO `recurring_transaction`
+             (id_space, id_category, type, amount, concept,
+              day_of_month, start_date, active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->execute([
+            $space_id,
+            $category_id,
+            'expense',
+            '75.00',
+            'Alquiler',
+            15,
+            '2026-10-01',
+            1
+        ]);
+
+        $recurring_id = (int) $this->db->lastInsertId();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `recurring_occurrence`
+             (id_space, id_recurring_transaction, period,
+              scheduled_date, status, id_category, type,
+              concept, amount, id_transaction, resolved_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())'
+        );
+        $stmt->execute([
+            $space_id,
+            $recurring_id,
+            '2026-10-01',
+            '2026-10-15',
+            'confirmed',
+            $category_id,
+            'expense',
+            'Alquiler',
+            '75.00',
+            $transaction->id
+        ]);
+
+        try {
+            $service->update(
+                $space_id, $owner_id, $transaction->id,
+                $category_id, 'expense', '80.00',
+                'Alquiler modificado', '2026-10-15'
+            );
+
+            $this->fail(
+                'Se ha permitido editar un movimiento recurrente confirmado.'
+            );
+        }
+        catch (LogicException) {
+            $stmt = $this->db->prepare(
+                'SELECT amount, concept
+                 FROM `financial_transaction`
+                 WHERE id = ?'
+            );
+            $stmt->execute([$transaction->id]);
+
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            $this->assertIsArray($row);
+            $this->assertSame('75.00', $row['amount']);
+            $this->assertSame('Alquiler', $row['concept']);
+            $this->assertFalse($this->db->inTransaction());
+        }
     }
 
     /**
