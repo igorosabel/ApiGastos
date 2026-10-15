@@ -1,0 +1,12 @@
+{
+    "id": {{ recurring.id | number }},
+    "space_id": {{ recurring.id_space | number }},
+    "category_id": {{ recurring.id_category | number }},
+    "type": {{ recurring.type | plain }},
+    "amount": {{ recurring.amount | plain }},
+    "concept": {{ recurring.concept | plain }},
+    "day_of_month": {{ recurring.day_of_month | number }},
+    "start_date": {{ recurring.start_date | plain }},
+    "end_date": {{ recurring.end_date | plain }},
+    "active": {{ recurring.active | bool }}
+}
