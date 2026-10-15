@@ -7,6 +7,8 @@ use Osumi\OsumiFramework\Core\OMiddleware;
 use Osumi\OsumiFramework\App\Middleware\LoginMiddleware;
 use Osumi\OsumiFramework\App\Module\Recurring\CreateRecurring\CreateRecurringComponent;
 use Osumi\OsumiFramework\App\Module\Recurring\GetRecurring\GetRecurringComponent;
+use Osumi\OsumiFramework\App\Module\Recurring\UpdateRecurring\UpdateRecurringComponent;
+use Osumi\OsumiFramework\App\Module\Recurring\SetRecurringStatus\SetRecurringStatusComponent;
 
 ORoute::prefix('/recurring', function(): void {
     ORoute::get('', GetRecurringComponent::class, [
@@ -16,6 +18,18 @@ ORoute::prefix('/recurring', function(): void {
     ]);
 
     ORoute::post('', CreateRecurringComponent::class, [
+        OMiddleware::PHASE_BEFORE => [
+            LoginMiddleware::class
+        ]
+    ]);
+
+    ORoute::post('/update', UpdateRecurringComponent::class, [
+        OMiddleware::PHASE_BEFORE => [
+            LoginMiddleware::class
+        ]
+    ]);
+
+    ORoute::post('/status', SetRecurringStatusComponent::class, [
         OMiddleware::PHASE_BEFORE => [
             LoginMiddleware::class
         ]

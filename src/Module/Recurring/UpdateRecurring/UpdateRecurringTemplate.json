@@ -1,0 +1,6 @@
+{
+    "success": {{ success | bool }},
+    "recurring": {{ recurring }},
+    "error": {{ error | plain }},
+    "message": {{ message | plain }}
+}
