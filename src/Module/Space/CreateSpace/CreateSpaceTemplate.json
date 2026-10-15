@@ -1,0 +1,12 @@
+{
+    "success": {{ success | bool }},
+    "space": {
+        "id": {{ id | number }},
+        "name": {{ name | plain }},
+        "type": {{ type | plain }},
+        "owner_id": {{ owner_id | number }},
+        "is_owner": {{ is_owner | bool }}
+    },
+    "error": {{ error | plain }},
+    "message": {{ message | plain }}
+}
