@@ -5,7 +5,7 @@ namespace Osumi\OsumiFramework\App\Module\Space\GetMembers;
 use DomainException;
 use InvalidArgumentException;
 use Osumi\OsumiFramework\App\Component\Model\SpaceMemberList\SpaceMemberListComponent;
-use Osumi\OsumiFramework\App\DTO\GetSpaceMembersDTO;
+use Osumi\OsumiFramework\App\DTO\Space\GetSpaceMembersDTO;
 use Osumi\OsumiFramework\App\Service\Space\SpaceMemberService;
 use Osumi\OsumiFramework\Core\OComponent;
 use Osumi\OsumiFramework\Core\OMiddleware;

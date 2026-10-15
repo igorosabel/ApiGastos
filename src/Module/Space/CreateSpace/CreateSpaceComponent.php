@@ -4,7 +4,7 @@ namespace Osumi\OsumiFramework\App\Module\Space\CreateSpace;
 
 use InvalidArgumentException;
 use Osumi\OsumiFramework\App\Component\Model\Space\SpaceComponent;
-use Osumi\OsumiFramework\App\DTO\CreateSpaceDTO;
+use Osumi\OsumiFramework\App\DTO\Space\CreateSpaceDTO;
 use Osumi\OsumiFramework\App\Service\Space\SpaceService;
 use Osumi\OsumiFramework\Core\OComponent;
 use Osumi\OsumiFramework\Core\OMiddleware;

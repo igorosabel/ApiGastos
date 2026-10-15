@@ -6,7 +6,7 @@ use DomainException;
 use InvalidArgumentException;
 use LogicException;
 use Osumi\OsumiFramework\App\Component\Model\Space\SpaceComponent;
-use Osumi\OsumiFramework\App\DTO\AcceptSpaceInvitationDTO;
+use Osumi\OsumiFramework\App\DTO\Space\AcceptSpaceInvitationDTO;
 use Osumi\OsumiFramework\App\Service\Space\SpaceInvitationService;
 use Osumi\OsumiFramework\Core\OComponent;
 use Osumi\OsumiFramework\Core\OMiddleware;

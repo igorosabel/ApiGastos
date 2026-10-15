@@ -5,7 +5,7 @@ namespace Osumi\OsumiFramework\App\Module\Space\CreateInvitation;
 use DomainException;
 use InvalidArgumentException;
 use LogicException;
-use Osumi\OsumiFramework\App\DTO\CreateSpaceInvitationDTO;
+use Osumi\OsumiFramework\App\DTO\Space\CreateSpaceInvitationDTO;
 use Osumi\OsumiFramework\App\Service\Space\SpaceInvitationService;
 use Osumi\OsumiFramework\Core\OComponent;
 use Osumi\OsumiFramework\Core\OMiddleware;

@@ -5,7 +5,7 @@ namespace Osumi\OsumiFramework\App\Module\Category\DeleteCategory;
 use DomainException;
 use InvalidArgumentException;
 use LogicException;
-use Osumi\OsumiFramework\App\DTO\DeleteCategoryDTO;
+use Osumi\OsumiFramework\App\DTO\Category\DeleteCategoryDTO;
 use Osumi\OsumiFramework\App\Service\Category\CategoryService;
 use Osumi\OsumiFramework\Core\OComponent;
 use Osumi\OsumiFramework\Core\OMiddleware;

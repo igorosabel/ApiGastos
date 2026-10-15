@@ -123,3 +123,31 @@ https://github.com/osumionline/TPV-Backup-API
 Consultar especialmente sus DTO y los componentes de `src/Component/Model/`.
 
 Los ejemplos de otros proyectos sirven como referencia, no sustituyen la comprobación de compatibilidad con OFW 9.12.1.
+
+
+## Organización por dominios
+
+Los DTO se organizan en subcarpetas dentro de `src/DTO/`:
+
+- `DTO/Space/`: espacios, miembros e invitaciones.
+- `DTO/Category/`: categorías.
+- Los dominios futuros tendrán su propia subcarpeta.
+
+El namespace debe coincidir con la ruta PSR-4.
+
+Las pruebas se organizan por tipo y por dominio:
+
+- `tests/Unit/Auth/`
+- `tests/Unit/Space/`
+- `tests/Unit/Category/`
+- `tests/Integration/Auth/`
+- `tests/Integration/Space/`
+- `tests/Integration/Category/`
+
+`OrmIntegrationTestCase.php` permanece en
+`tests/Integration/` como clase base compartida.
+
+No se cambian namespaces de las clases de test por el
+mero hecho de reorganizarlas.
+
+Los nuevos dominios deben mantener esta organización.

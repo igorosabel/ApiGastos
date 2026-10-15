@@ -5,7 +5,7 @@ namespace Osumi\OsumiFramework\App\Module\Category\UpdateCategory;
 use DomainException;
 use InvalidArgumentException;
 use Osumi\OsumiFramework\App\Component\Model\Category\CategoryComponent;
-use Osumi\OsumiFramework\App\DTO\UpdateCategoryDTO;
+use Osumi\OsumiFramework\App\DTO\Category\UpdateCategoryDTO;
 use Osumi\OsumiFramework\App\Service\Category\CategoryService;
 use Osumi\OsumiFramework\Core\OComponent;
 use Osumi\OsumiFramework\Core\OMiddleware;

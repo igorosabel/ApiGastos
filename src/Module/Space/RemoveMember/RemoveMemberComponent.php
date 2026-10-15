@@ -5,7 +5,7 @@ namespace Osumi\OsumiFramework\App\Module\Space\RemoveMember;
 use DomainException;
 use InvalidArgumentException;
 use LogicException;
-use Osumi\OsumiFramework\App\DTO\RemoveSpaceMemberDTO;
+use Osumi\OsumiFramework\App\DTO\Space\RemoveSpaceMemberDTO;
 use Osumi\OsumiFramework\App\Service\Space\SpaceMemberService;
 use Osumi\OsumiFramework\Core\OComponent;
 use Osumi\OsumiFramework\Core\OMiddleware;

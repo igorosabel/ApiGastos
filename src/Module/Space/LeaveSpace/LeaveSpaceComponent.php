@@ -5,7 +5,7 @@ namespace Osumi\OsumiFramework\App\Module\Space\LeaveSpace;
 use DomainException;
 use InvalidArgumentException;
 use LogicException;
-use Osumi\OsumiFramework\App\DTO\LeaveSpaceDTO;
+use Osumi\OsumiFramework\App\DTO\Space\LeaveSpaceDTO;
 use Osumi\OsumiFramework\App\Service\Space\SpaceMemberService;
 use Osumi\OsumiFramework\Core\OComponent;
 use Osumi\OsumiFramework\Core\OMiddleware;

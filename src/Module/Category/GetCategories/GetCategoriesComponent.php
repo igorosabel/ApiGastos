@@ -5,7 +5,7 @@ namespace Osumi\OsumiFramework\App\Module\Category\GetCategories;
 use DomainException;
 use InvalidArgumentException;
 use Osumi\OsumiFramework\App\Component\Model\CategoryList\CategoryListComponent;
-use Osumi\OsumiFramework\App\DTO\GetCategoriesDTO;
+use Osumi\OsumiFramework\App\DTO\Category\GetCategoriesDTO;
 use Osumi\OsumiFramework\App\Service\Category\CategoryService;
 use Osumi\OsumiFramework\Core\OComponent;
 use Osumi\OsumiFramework\Core\OMiddleware;

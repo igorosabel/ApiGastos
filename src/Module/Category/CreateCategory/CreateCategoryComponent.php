@@ -5,7 +5,7 @@ namespace Osumi\OsumiFramework\App\Module\Category\CreateCategory;
 use DomainException;
 use InvalidArgumentException;
 use Osumi\OsumiFramework\App\Component\Model\Category\CategoryComponent;
-use Osumi\OsumiFramework\App\DTO\CreateCategoryDTO;
+use Osumi\OsumiFramework\App\DTO\Category\CreateCategoryDTO;
 use Osumi\OsumiFramework\App\Service\Category\CategoryService;
 use Osumi\OsumiFramework\Core\OComponent;
 use Osumi\OsumiFramework\Core\OMiddleware;
