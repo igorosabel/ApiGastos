@@ -1,0 +1,6 @@
+{
+    "id": {{ member.id_user | number }},
+    "name": {{ user.name | plain }},
+    "joined_at": {{ member.joined_at | plain }},
+    "is_owner": {{ is_owner | bool }}
+}

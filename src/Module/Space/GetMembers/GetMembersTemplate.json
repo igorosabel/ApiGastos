@@ -1,0 +1,6 @@
+{
+    "success": {{ success | bool }},
+    "members": [{{ list }}],
+    "error": {{ error | plain }},
+    "message": {{ message | plain }}
+}
