@@ -1,0 +1,7 @@
+{
+    "success": {{ success | bool }},
+    "user_id": {{ user_id | number }},
+    "space_id": {{ space_id | number }},
+    "error": {{ error | plain }},
+    "message": {{ message | plain }}
+}

@@ -9,7 +9,7 @@ use PDOException;
 use RuntimeException;
 use Throwable;
 
-final class RegistrationService extends OService {
+class RegistrationService extends OService {
     private readonly PDO $db;
 
     /**
