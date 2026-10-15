@@ -1,0 +1,6 @@
+{
+    "success": {{ success | bool }},
+    "occurrence": {{ occurrence }},
+    "error": {{ error | plain }},
+    "message": {{ message | plain }}
+}

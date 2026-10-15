@@ -408,6 +408,371 @@ final class OccurrenceServiceIntegrationTest extends OrmIntegrationTestCase {
         );
     }
 
+
+    /**
+     * Confirma una mensualidad y registra un único movimiento.
+     */
+    public function testConfirmCreatesExactlyOneTransaction(): void {
+        [$space_id, $owner_id, $category_id] = $this->prepareSpace();
+        $period = $this->currentPeriod();
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 15
+        );
+        $service = new OccurrenceService();
+
+        $generated = $service->generate(
+            $space_id, $owner_id, $recurring->id, $period
+        );
+        $occurrence_id = $generated['occurrence']->id;
+
+        $resolved = $service->resolve(
+            $space_id, $owner_id, $occurrence_id, 'confirm'
+        );
+
+        $this->assertSame('confirmed', $resolved->status);
+        $this->assertNotNull($resolved->id_transaction);
+        $this->assertNotNull($resolved->resolved_at);
+        $this->assertFalse($this->db->inTransaction());
+
+        $stmt = $this->db->prepare(
+            'SELECT id_space, id_user, id_category,
+                    type, amount, concept, date
+             FROM `financial_transaction`
+             WHERE id = ?'
+        );
+        $stmt->execute([$resolved->id_transaction]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        $this->assertIsArray($row);
+        $this->assertSame($space_id, (int) $row['id_space']);
+        $this->assertSame($owner_id, (int) $row['id_user']);
+        $this->assertSame($category_id, (int) $row['id_category']);
+        $this->assertSame('expense', $row['type']);
+        $this->assertSame('150.00', $row['amount']);
+        $this->assertSame('Alquiler', $row['concept']);
+        $this->assertSame(
+            substr($period, 0, 8) . '15',
+            $row['date']
+        );
+
+        $this->assertSame(1, $this->countSpaceTransactions($space_id));
+    }
+
+    /**
+     * Omite una mensualidad sin registrar movimiento.
+     */
+    public function testSkipDoesNotCreateTransaction(): void {
+        [$space_id, $owner_id, $category_id] = $this->prepareSpace();
+        $period = $this->currentPeriod();
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+        $service = new OccurrenceService();
+
+        $generated = $service->generate(
+            $space_id, $owner_id, $recurring->id, $period
+        );
+
+        $resolved = $service->resolve(
+            $space_id,
+            $owner_id,
+            $generated['occurrence']->id,
+            'skip'
+        );
+
+        $this->assertSame('skipped', $resolved->status);
+        $this->assertNull($resolved->id_transaction);
+        $this->assertNotNull($resolved->resolved_at);
+        $this->assertSame(0, $this->countSpaceTransactions($space_id));
+    }
+
+    /**
+     * Una ocurrencia confirmada no puede resolverse otra vez.
+     */
+    public function testConfirmCannotBeRepeated(): void {
+        [$space_id, $owner_id, $category_id] = $this->prepareSpace();
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+        $service = new OccurrenceService();
+
+        $generated = $service->generate(
+            $space_id, $owner_id, $recurring->id,
+            $this->currentPeriod()
+        );
+        $occurrence_id = $generated['occurrence']->id;
+
+        $service->resolve(
+            $space_id, $owner_id, $occurrence_id, 'confirm'
+        );
+
+        try {
+            $service->resolve(
+                $space_id, $owner_id, $occurrence_id, 'confirm'
+            );
+            $this->fail('Se ha confirmado dos veces.');
+        }
+        catch (LogicException) {
+            $this->assertSame(
+                1,
+                $this->countSpaceTransactions($space_id)
+            );
+            $this->assertFalse($this->db->inTransaction());
+        }
+    }
+
+    /**
+     * Una ocurrencia omitida no puede confirmarse posteriormente.
+     */
+    public function testSkippedOccurrenceCannotBeConfirmed(): void {
+        [$space_id, $owner_id, $category_id] = $this->prepareSpace();
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+        $service = new OccurrenceService();
+
+        $generated = $service->generate(
+            $space_id, $owner_id, $recurring->id,
+            $this->currentPeriod()
+        );
+        $occurrence_id = $generated['occurrence']->id;
+
+        $service->resolve(
+            $space_id, $owner_id, $occurrence_id, 'skip'
+        );
+
+        try {
+            $service->resolve(
+                $space_id, $owner_id, $occurrence_id, 'confirm'
+            );
+            $this->fail('Se ha confirmado una ocurrencia omitida.');
+        }
+        catch (LogicException) {
+            $this->assertSame(
+                0,
+                $this->countSpaceTransactions($space_id)
+            );
+        }
+    }
+
+    /**
+     * La confirmación utiliza la instantánea, no la plantilla editada.
+     */
+    public function testConfirmUsesOccurrenceSnapshot(): void {
+        [$space_id, $owner_id, $category_id] = $this->prepareSpace();
+        $period = $this->currentPeriod();
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+        $service = new OccurrenceService();
+
+        $generated = $service->generate(
+            $space_id, $owner_id, $recurring->id, $period
+        );
+
+        (new RecurringService())->update(
+            $space_id, $owner_id, $recurring->id,
+            $category_id, 'expense', '250.00',
+            'Alquiler nuevo', 20, $period
+        );
+
+        $resolved = $service->resolve(
+            $space_id,
+            $owner_id,
+            $generated['occurrence']->id,
+            'confirm'
+        );
+
+        $stmt = $this->db->prepare(
+            'SELECT amount, concept, date
+             FROM `financial_transaction`
+             WHERE id = ?'
+        );
+        $stmt->execute([$resolved->id_transaction]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        $this->assertIsArray($row);
+        $this->assertSame('150.00', $row['amount']);
+        $this->assertSame('Alquiler', $row['concept']);
+        $this->assertSame(
+            substr($period, 0, 8) . '10',
+            $row['date']
+        );
+    }
+
+    /**
+     * Desactivar la plantilla no impide confirmar una pendiente.
+     */
+    public function testInactiveTemplateCanHavePendingResolved(): void {
+        [$space_id, $owner_id, $category_id] = $this->prepareSpace();
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+        $service = new OccurrenceService();
+
+        $generated = $service->generate(
+            $space_id, $owner_id, $recurring->id,
+            $this->currentPeriod()
+        );
+
+        (new RecurringService())->setActive(
+            $space_id, $owner_id, $recurring->id, false
+        );
+
+        $resolved = $service->resolve(
+            $space_id, $owner_id,
+            $generated['occurrence']->id, 'confirm'
+        );
+
+        $this->assertSame('confirmed', $resolved->status);
+        $this->assertSame(1, $this->countSpaceTransactions($space_id));
+    }
+
+    /**
+     * El listado filtra los estados e incluye los ya resueltos.
+     */
+    public function testGetBySpaceFiltersStatus(): void {
+        [$space_id, $owner_id, $category_id] = $this->prepareSpace();
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+        $service = new OccurrenceService();
+
+        $first_period = $this->currentPeriod();
+        $next_period = (new DateTimeImmutable($first_period))
+            ->modify('+1 month')
+            ->format('Y-m-d');
+
+        $first = $service->generate(
+            $space_id, $owner_id, $recurring->id,
+            $first_period
+        );
+        $service->generate(
+            $space_id, $owner_id, $recurring->id,
+            $next_period
+        );
+
+        $service->resolve(
+            $space_id, $owner_id,
+            $first['occurrence']->id, 'skip'
+        );
+
+        $this->assertCount(
+            2,
+            $service->getBySpace($space_id, $owner_id)
+        );
+        $this->assertCount(
+            1,
+            $service->getBySpace($space_id, $owner_id, 'pending')
+        );
+        $this->assertCount(
+            1,
+            $service->getBySpace($space_id, $owner_id, 'skipped')
+        );
+        $this->assertSame(
+            [],
+            $service->getBySpace($space_id, $owner_id, 'confirmed')
+        );
+    }
+
+    /**
+     * Un usuario ajeno no puede consultar ocurrencias.
+     */
+    public function testOutsiderCannotListOccurrences(): void {
+        [$space_id] = $this->prepareSpace();
+        $outsider = $this->createUser();
+
+        $this->expectException(DomainException::class);
+
+        (new OccurrenceService())->getBySpace(
+            $space_id, $outsider
+        );
+    }
+
+    /**
+     * Un usuario ajeno no puede resolver ocurrencias.
+     */
+    public function testOutsiderCannotResolveOccurrence(): void {
+        [$space_id, $owner_id, $category_id] = $this->prepareSpace();
+        $outsider = $this->createUser();
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+
+        $service = new OccurrenceService();
+        $generated = $service->generate(
+            $space_id, $owner_id, $recurring->id,
+            $this->currentPeriod()
+        );
+
+        $this->expectException(DomainException::class);
+
+        $service->resolve(
+            $space_id, $outsider,
+            $generated['occurrence']->id, 'confirm'
+        );
+    }
+
+    /**
+     * No permite resolver una ocurrencia de otro espacio.
+     */
+    public function testCannotResolveOtherSpacesOccurrence(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        [$other_space_id, $other_owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $recurring = $this->recurring(
+            $other_space_id, $other_owner_id,
+            $category_id, 10
+        );
+        $service = new OccurrenceService();
+        $generated = $service->generate(
+            $other_space_id, $other_owner_id,
+            $recurring->id, $this->currentPeriod()
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+
+        $service->resolve(
+            $space_id, $owner_id,
+            $generated['occurrence']->id, 'confirm'
+        );
+    }
+
+    /**
+     * Rechaza acciones de resolución inválidas.
+     */
+    public function testResolveRejectsInvalidAction(): void {
+        $this->expectException(InvalidArgumentException::class);
+
+        (new OccurrenceService())->resolve(1, 1, 1, 'delete');
+    }
+
+    /**
+     * Rechaza filtros de estado inválidos.
+     */
+    public function testGetBySpaceRejectsInvalidStatus(): void {
+        $this->expectException(InvalidArgumentException::class);
+
+        (new OccurrenceService())->getBySpace(1, 1, 'unknown');
+    }
+
+    /**
+     * Cuenta los movimientos reales registrados en un espacio.
+     *
+     * @param int $space_id Espacio.
+     * @return int Total de movimientos.
+     */
+    private function countSpaceTransactions(int $space_id): int {
+        $stmt = $this->db->prepare(
+            'SELECT COUNT(*) FROM `financial_transaction`
+             WHERE id_space = ?'
+        );
+        $stmt->execute([$space_id]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
     /**
      * Prepara un propietario, espacio y categoría.
      *

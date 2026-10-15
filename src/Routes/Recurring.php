@@ -10,6 +10,8 @@ use Osumi\OsumiFramework\App\Module\Recurring\GetRecurring\GetRecurringComponent
 use Osumi\OsumiFramework\App\Module\Recurring\UpdateRecurring\UpdateRecurringComponent;
 use Osumi\OsumiFramework\App\Module\Recurring\SetRecurringStatus\SetRecurringStatusComponent;
 use Osumi\OsumiFramework\App\Module\Recurring\GenerateOccurrence\GenerateOccurrenceComponent;
+use Osumi\OsumiFramework\App\Module\Recurring\GetOccurrences\GetOccurrencesComponent;
+use Osumi\OsumiFramework\App\Module\Recurring\ResolveOccurrence\ResolveOccurrenceComponent;
 
 ORoute::prefix('/recurring', function(): void {
     ORoute::get('', GetRecurringComponent::class, [
@@ -37,6 +39,18 @@ ORoute::prefix('/recurring', function(): void {
     ]);
 
     ORoute::post('/generate', GenerateOccurrenceComponent::class, [
+        OMiddleware::PHASE_BEFORE => [
+            LoginMiddleware::class
+        ]
+    ]);
+
+    ORoute::get('/occurrences', GetOccurrencesComponent::class, [
+        OMiddleware::PHASE_BEFORE => [
+            LoginMiddleware::class
+        ]
+    ]);
+
+    ORoute::post('/occurrences/resolve', ResolveOccurrenceComponent::class, [
         OMiddleware::PHASE_BEFORE => [
             LoginMiddleware::class
         ]

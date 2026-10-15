@@ -2,15 +2,16 @@
 
 namespace Osumi\OsumiFramework\App\Service\Recurring;
 
+use PDO;
 use DateTimeImmutable;
+use Throwable;
 use DomainException;
 use InvalidArgumentException;
+use LogicException;
+use RuntimeException;
+use Osumi\OsumiFramework\ORM\ODB;
 use Osumi\OsumiFramework\App\Model\RecurringOccurrence;
 use Osumi\OsumiFramework\Core\OService;
-use Osumi\OsumiFramework\ORM\ODB;
-use PDO;
-use RuntimeException;
-use Throwable;
 
 class OccurrenceService extends OService {
     /**
@@ -251,6 +252,7 @@ class OccurrenceService extends OService {
              WHERE id_recurring_transaction = :recurring_id
                AND period = :period'
         );
+
         $stmt->execute([
             'recurring_id' => $recurring_id,
             'period' => $period
@@ -258,14 +260,334 @@ class OccurrenceService extends OService {
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if (!is_array($row)) {
-            return null;
+        return is_array($row)
+            ? $this->hydrateOccurrence($row)
+            : null;
+    }
+
+    /**
+     * Consulta las ocurrencias del espacio, con filtro de estado.
+     *
+     * @param int $space_id Espacio contable.
+     * @param int $user_id Usuario autenticado.
+     * @param string|null $status Estado opcional.
+     * @return list<RecurringOccurrence> Ocurrencias.
+     */
+    public function getBySpace(
+        int $space_id,
+        int $user_id,
+        ?string $status = null
+    ): array {
+        if ($space_id <= 0 || $user_id <= 0) {
+            throw new InvalidArgumentException(
+                'Los identificadores no son válidos.'
+            );
         }
 
+        if (
+            $status !== null &&
+            !in_array(
+                $status,
+                ['pending', 'confirmed', 'skipped'],
+                true
+            )
+        ) {
+            throw new InvalidArgumentException(
+                'El estado de la ocurrencia no es válido.'
+            );
+        }
+
+        $db = ODB::getInstance();
+
+        $this->requireActiveMember($db, $space_id, $user_id);
+
+        $sql = 'SELECT id, id_space, id_recurring_transaction,
+                       period, scheduled_date, status,
+                       id_category, type, concept, amount,
+                       id_transaction, resolved_at
+                FROM `recurring_occurrence`
+                WHERE id_space = :space_id';
+
+        if ($status !== null) {
+            $sql .= ' AND status = :status';
+        }
+
+        $sql .= ' ORDER BY scheduled_date DESC, id DESC';
+
+        $stmt = $db->prepare($sql);
+        $stmt->bindValue(':space_id', $space_id, PDO::PARAM_INT);
+
+        if ($status !== null) {
+            $stmt->bindValue(':status', $status, PDO::PARAM_STR);
+        }
+
+        $stmt->execute();
+
+        $list = [];
+
+        while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $list[] = $this->hydrateOccurrence($row);
+        }
+
+        return $list;
+    }
+
+    /**
+     * Confirma u omite una ocurrencia pendiente.
+     *
+     * La confirmación crea el movimiento real y resuelve
+     * la ocurrencia en una única transacción ACID.
+     *
+     * @param int $space_id Espacio.
+     * @param int $user_id Usuario que resuelve.
+     * @param int $occurrence_id Ocurrencia.
+     * @param string $action Acción confirm o skip.
+     * @return RecurringOccurrence Ocurrencia resuelta.
+     */
+    public function resolve(
+        int $space_id,
+        int $user_id,
+        int $occurrence_id,
+        string $action
+    ): RecurringOccurrence {
+        if (
+            $space_id <= 0 ||
+            $user_id <= 0 ||
+            $occurrence_id <= 0
+        ) {
+            throw new InvalidArgumentException(
+                'Los identificadores no son válidos.'
+            );
+        }
+
+        if (!in_array($action, ['confirm', 'skip'], true)) {
+            throw new InvalidArgumentException(
+                'La acción de resolución no es válida.'
+            );
+        }
+
+        $db = ODB::getInstance();
+
+        if (!$db->beginTransaction()) {
+            throw new RuntimeException(
+                'No se ha podido iniciar la transacción.'
+            );
+        }
+
+        try {
+            // Mismo orden de bloqueo que las operaciones
+            // económicas: espacio y después registro afectado.
+            $stmt = $db->prepare(
+                'SELECT id FROM `space`
+                 WHERE id = :space_id FOR UPDATE'
+            );
+            $stmt->execute(['space_id' => $space_id]);
+
+            if ($stmt->fetch(PDO::FETCH_ASSOC) === false) {
+                throw new DomainException(
+                    'No tienes acceso a este espacio.'
+                );
+            }
+
+            $this->requireActiveMember(
+                $db, $space_id, $user_id
+            );
+
+            $stmt = $db->prepare(
+                'SELECT id, id_space, id_recurring_transaction,
+                        period, scheduled_date, status,
+                        id_category, type, concept, amount,
+                        id_transaction, resolved_at
+                 FROM `recurring_occurrence`
+                 WHERE id = :occurrence_id
+                   AND id_space = :space_id
+                 FOR UPDATE'
+            );
+            $stmt->execute([
+                'occurrence_id' => $occurrence_id,
+                'space_id' => $space_id
+            ]);
+
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!is_array($row)) {
+                throw new InvalidArgumentException(
+                    'La ocurrencia no pertenece al espacio.'
+                );
+            }
+
+            if ($row['status'] !== 'pending') {
+                throw new LogicException(
+                    'La ocurrencia ya ha sido resuelta.'
+                );
+            }
+
+            $transaction_id = null;
+
+            if ($action === 'confirm') {
+                // Usar exactamente la instantánea de la
+                // ocurrencia, no los valores actuales
+                // de la plantilla recurrente.
+                $stmt = $db->prepare(
+                    'INSERT INTO `financial_transaction`
+                     (id_space, id_user, id_category,
+                      type, amount, concept, `date`)
+                     VALUES
+                     (:space_id, :user_id, :category_id,
+                      :type, :amount, :concept, :date)'
+                );
+
+                $stmt->execute([
+                    'space_id' => $space_id,
+                    'user_id' => $user_id,
+                    'category_id' => (int) $row['id_category'],
+                    'type' => $row['type'],
+                    'amount' => (string) $row['amount'],
+                    'concept' => $row['concept'],
+                    'date' => $row['scheduled_date']
+                ]);
+
+                $transaction_id = (int) $db->lastInsertId();
+
+                if ($transaction_id <= 0) {
+                    throw new RuntimeException(
+                        'No se ha podido registrar el movimiento.'
+                    );
+                }
+            }
+
+            $stmt = $db->prepare(
+                'UPDATE `recurring_occurrence`
+                 SET status = :status,
+                     id_transaction = :transaction_id,
+                     resolved_at = NOW()
+                 WHERE id = :occurrence_id
+                   AND id_space = :space_id
+                   AND status = :pending'
+            );
+
+            $stmt->bindValue(
+                ':status',
+                $action === 'confirm' ? 'confirmed' : 'skipped',
+                PDO::PARAM_STR
+            );
+            $stmt->bindValue(
+                ':transaction_id',
+                $transaction_id,
+                $transaction_id === null
+                    ? PDO::PARAM_NULL
+                    : PDO::PARAM_INT
+            );
+            $stmt->bindValue(
+                ':occurrence_id',
+                $occurrence_id,
+                PDO::PARAM_INT
+            );
+            $stmt->bindValue(
+                ':space_id',
+                $space_id,
+                PDO::PARAM_INT
+            );
+            $stmt->bindValue(
+                ':pending',
+                'pending',
+                PDO::PARAM_STR
+            );
+            $stmt->execute();
+
+            if ($stmt->rowCount() !== 1) {
+                throw new LogicException(
+                    'La ocurrencia ya ha sido resuelta.'
+                );
+            }
+
+            // Recuperar el resultado dentro de la misma
+            // transacción, antes de confirmar.
+            $stmt = $db->prepare(
+                'SELECT id, id_space, id_recurring_transaction,
+                        period, scheduled_date, status,
+                        id_category, type, concept, amount,
+                        id_transaction, resolved_at
+                 FROM `recurring_occurrence`
+                 WHERE id = :occurrence_id
+                   AND id_space = :space_id'
+            );
+            $stmt->execute([
+                'occurrence_id' => $occurrence_id,
+                'space_id' => $space_id
+            ]);
+
+            $updated = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!is_array($updated)) {
+                throw new RuntimeException(
+                    'No se ha podido recuperar la ocurrencia.'
+                );
+            }
+
+            $occurrence = $this->hydrateOccurrence($updated);
+
+            if (!$db->commit()) {
+                throw new RuntimeException(
+                    'No se ha podido confirmar la resolución.'
+                );
+            }
+
+            return $occurrence;
+        }
+        catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Verifica la membresía activa sobre la conexión actual.
+     *
+     * @param PDO $db Conexión compartida.
+     * @param int $space_id Espacio.
+     * @param int $user_id Usuario.
+     * @return void
+     */
+    private function requireActiveMember(
+        PDO $db,
+        int $space_id,
+        int $user_id
+    ): void {
+        $stmt = $db->prepare(
+            'SELECT id FROM `space_member`
+             WHERE id_space = :space_id
+               AND id_user = :user_id
+               AND left_at IS NULL LIMIT 1'
+        );
+
+        $stmt->execute([
+            'space_id' => $space_id,
+            'user_id' => $user_id
+        ]);
+
+        if ($stmt->fetch(PDO::FETCH_ASSOC) === false) {
+            throw new DomainException(
+                'No tienes acceso a este espacio.'
+            );
+        }
+    }
+
+    /**
+     * Convierte una fila SQL en un modelo de ocurrencia.
+     *
+     * @param array<string, mixed> $row Fila consultada.
+     * @return RecurringOccurrence Ocurrencia.
+     */
+    private function hydrateOccurrence(array $row): RecurringOccurrence {
         $occurrence = new RecurringOccurrence();
         $occurrence->id = (int) $row['id'];
         $occurrence->id_space = (int) $row['id_space'];
-        $occurrence->id_recurring_transaction = (int) $row['id_recurring_transaction'];
+        $occurrence->id_recurring_transaction =
+            (int) $row['id_recurring_transaction'];
         $occurrence->period = $row['period'];
         $occurrence->scheduled_date = $row['scheduled_date'];
         $occurrence->status = $row['status'];
