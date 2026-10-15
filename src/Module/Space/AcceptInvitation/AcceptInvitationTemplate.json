@@ -1,0 +1,6 @@
+{
+    "success": {{ success | bool }},
+    "space": {{ space }},
+    "error": {{ error | plain }},
+    "message": {{ message | plain }}
+}

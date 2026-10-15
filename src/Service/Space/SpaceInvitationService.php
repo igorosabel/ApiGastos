@@ -2,15 +2,18 @@
 
 namespace Osumi\OsumiFramework\App\Service\Space;
 
+use RuntimeException;
+use PDO;
+use Throwable;
 use DomainException;
 use InvalidArgumentException;
 use LogicException;
+use Osumi\OsumiFramework\ORM\ODB;
 use Osumi\OsumiFramework\App\Model\Space;
 use Osumi\OsumiFramework\App\Model\SpaceInvitation;
 use Osumi\OsumiFramework\App\Model\SpaceMember;
 use Osumi\OsumiFramework\App\Model\User;
 use Osumi\OsumiFramework\Core\OService;
-use RuntimeException;
 
 class SpaceInvitationService extends OService {
     /**
@@ -118,5 +121,141 @@ class SpaceInvitationService extends OService {
             'invitation' => $invitation,
             'token' => $token
         ];
+    }
+
+    /**
+     * Acepta una invitación y añade al destinatario como miembro.
+     *
+     * @param string $token Token recibido por el invitado.
+     * @param int $user_id Identificador autenticado.
+     * @return Space Espacio al que se ha incorporado.
+     */
+    public function accept(string $token, int $user_id): Space {
+        if (
+            $user_id <= 0 ||
+            preg_match('/^[a-f0-9]{64}$/D', $token) !== 1
+        ) {
+            throw new InvalidArgumentException(
+                'Los datos de la invitación no son válidos.'
+            );
+        }
+
+        $db = ODB::getInstance();
+
+        if (!$db->beginTransaction()) {
+            throw new RuntimeException(
+                'No se ha podido iniciar la transacción.'
+            );
+        }
+
+        try {
+            $token_hash = hash('sha256', $token);
+
+            // Bloqueamos la invitación para impedir dobles aceptaciones.
+            $stmt = $db->prepare(
+                'SELECT id FROM `space_invitation`
+                 WHERE token_hash = :token_hash
+                 FOR UPDATE'
+            );
+
+            if (
+                $stmt === false ||
+                !$stmt->execute(['token_hash' => $token_hash])
+            ) {
+                throw new RuntimeException(
+                    'No se ha podido consultar la invitación.'
+                );
+            }
+
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!is_array($row)) {
+                throw new LogicException(
+                    'La invitación no está disponible.'
+                );
+            }
+
+            $invitation = SpaceInvitation::findOne([
+                'id' => (int) $row['id']
+            ]);
+
+            if (
+                $invitation === null ||
+                $invitation->accepted_at !== null ||
+                $invitation->revoked_at !== null ||
+                $invitation->expires_at === null ||
+                strtotime($invitation->expires_at) <= time()
+            ) {
+                throw new LogicException(
+                    'La invitación no está disponible.'
+                );
+            }
+
+            $user = User::findOne(['id' => $user_id]);
+
+            if (
+                $user === null ||
+                $user->email === null ||
+                mb_strtolower($user->email) !== $invitation->email
+            ) {
+                throw new DomainException(
+                    'La invitación pertenece a otro usuario.'
+                );
+            }
+
+            $space = Space::findOne([
+                'id' => $invitation->id_space
+            ]);
+
+            if ($space === null || $space->type !== 'shared') {
+                throw new LogicException(
+                    'El espacio de la invitación no está disponible.'
+                );
+            }
+
+            $existing_member = SpaceMember::findOne([
+                'id_space' => $space->id,
+                'id_user' => $user_id
+            ]);
+
+            if ($existing_member !== null) {
+                throw new LogicException(
+                    'Ya perteneces a este espacio.'
+                );
+            }
+
+            $member = new SpaceMember();
+            $member->id_space = $space->id;
+            $member->id_user = $user_id;
+
+            if (!$member->save()) {
+                throw new RuntimeException(
+                    'No se ha podido añadir al usuario al espacio.'
+                );
+            }
+
+            $invitation->accepted_at = date('Y-m-d H:i:s');
+
+            if (!$invitation->save()) {
+                throw new RuntimeException(
+                    'No se ha podido completar la invitación.'
+                );
+            }
+
+            if (!$db->commit()) {
+                throw new RuntimeException(
+                    'No se ha podido confirmar la aceptación.'
+                );
+            }
+
+            return $space;
+        }
+        catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+
+            throw $e;
+        }
     }
 }
