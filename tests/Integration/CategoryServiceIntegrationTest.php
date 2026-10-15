@@ -15,6 +15,9 @@ final class CategoryServiceIntegrationTest extends OrmIntegrationTestCase {
 
     /**
      * Limpia los datos creados en cada prueba.
+     *
+     * Elimina las categorías desde las hojas hacia las raíces
+     * para respetar la clave foránea autorreferenciada.
      */
     protected function tearDown(): void {
         try {
@@ -23,37 +26,55 @@ final class CategoryServiceIntegrationTest extends OrmIntegrationTestCase {
             }
 
             foreach (array_reverse($this->space_ids) as $space_id) {
-                $stmt = $this->db->prepare(
-                  'SELECT id FROM `category`
-                   WHERE id_space = ?
-                   ORDER BY id DESC'
-                );
-                $stmt->execute([$space_id]);
-
-                $ids = $stmt->fetchAll(PDO::FETCH_COLUMN);
-
+                // Eliminar primero las categorías que no tienen hijos.
+                // Repetir hasta vaciar el árbol del espacio.
                 $delete = $this->db->prepare(
-                  'DELETE FROM `category` WHERE id = ?'
+                    'DELETE c FROM `category` c
+                     LEFT JOIN `category` child
+                       ON child.id_space = c.id_space
+                      AND child.id_parent = c.id
+                     WHERE c.id_space = ?
+                       AND child.id IS NULL'
                 );
 
-                foreach ($ids as $id) {
-                  $delete->execute([$id]);
-                }
+                do {
+                    $delete->execute([$space_id]);
+                    $deleted = $delete->rowCount();
+                } while ($deleted > 0);
 
+                // Comprobar que no quedan categorías sin eliminar.
                 $stmt = $this->db->prepare(
-                    'DELETE FROM `space_member` WHERE id_space = ?'
+                    'SELECT COUNT(*) FROM `category`
+                     WHERE id_space = ?'
                 );
                 $stmt->execute([$space_id]);
 
+                $this->assertSame(
+                    0,
+                    (int) $stmt->fetchColumn(),
+                    'Quedan categorías sin eliminar.'
+                );
+
+                // Eliminar las membresías del espacio.
                 $stmt = $this->db->prepare(
-                    'DELETE FROM `space` WHERE id = ?'
+                    'DELETE FROM `space_member`
+                     WHERE id_space = ?'
+                );
+                $stmt->execute([$space_id]);
+
+                // Eliminar el espacio.
+                $stmt = $this->db->prepare(
+                    'DELETE FROM `space`
+                     WHERE id = ?'
                 );
                 $stmt->execute([$space_id]);
             }
 
+            // Eliminar los usuarios creados por la prueba.
             foreach (array_reverse($this->user_ids) as $user_id) {
                 $stmt = $this->db->prepare(
-                    'DELETE FROM `user` WHERE id = ?'
+                    'DELETE FROM `user`
+                     WHERE id = ?'
                 );
                 $stmt->execute([$user_id]);
             }
@@ -201,6 +222,217 @@ final class CategoryServiceIntegrationTest extends OrmIntegrationTestCase {
 
         (new CategoryService())->create(
             $space_id, $owner_id, 'Prueba', 'other'
+        );
+    }
+
+    /**
+     * Comprueba la edición de nombre y orden.
+     */
+    public function testUpdateNameAndOrder(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $service = new CategoryService();
+
+        $category = $service->create(
+            $space_id, $owner_id, 'Casa', 'expense'
+        );
+
+        $updated = $service->update(
+            $space_id, $owner_id, $category->id,
+            'Hogar', null, 4
+        );
+
+        $this->assertSame($category->id, $updated->id);
+        $this->assertSame('Hogar', $updated->name);
+        $this->assertNull($updated->id_parent);
+        $this->assertSame(4, $updated->sort_order);
+        $this->assertSame('expense', $updated->default_type);
+        $this->assertFalse($this->db->inTransaction());
+    }
+
+    /**
+     * Comprueba que una categoría puede cambiar de padre.
+     */
+    public function testMoveCategoryToAnotherParent(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $service = new CategoryService();
+
+        $first = $service->create(
+            $space_id, $owner_id, 'Alimentación', 'expense'
+        );
+        $second = $service->create(
+            $space_id, $owner_id, 'Hogar', 'expense'
+        );
+        $child = $service->create(
+            $space_id, $owner_id, 'Compras',
+            'expense', $first->id
+        );
+
+        $updated = $service->update(
+            $space_id, $owner_id, $child->id,
+            'Compras', $second->id, 1
+        );
+
+        $this->assertSame($second->id, $updated->id_parent);
+
+        $stmt = $this->db->prepare(
+            'SELECT id_parent FROM `category` WHERE id = ?'
+        );
+        $stmt->execute([$child->id]);
+
+        $this->assertSame(
+            (string) $second->id,
+            (string) $stmt->fetchColumn()
+        );
+    }
+
+    /**
+     * Comprueba que no puede asignarse a sí misma como padre.
+     */
+    public function testCannotBeOwnParent(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $service = new CategoryService();
+        $category = $service->create(
+            $space_id, $owner_id, 'Hogar', 'expense'
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+
+        $service->update(
+            $space_id, $owner_id, $category->id,
+            'Hogar', $category->id, 0
+        );
+    }
+
+    /**
+     * Comprueba la detección de ciclos indirectos.
+     */
+    public function testCannotCreateIndirectCycle(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $service = new CategoryService();
+
+        $root = $service->create(
+            $space_id, $owner_id, 'Raíz', 'expense'
+        );
+        $child = $service->create(
+            $space_id, $owner_id, 'Hija',
+            'expense', $root->id
+        );
+        $grandchild = $service->create(
+            $space_id, $owner_id, 'Nieta',
+            'expense', $child->id
+        );
+
+        try {
+            $service->update(
+                $space_id, $owner_id, $root->id,
+                'Raíz', $grandchild->id, 0
+            );
+
+            $this->fail('Se ha permitido crear un ciclo.');
+        }
+        catch (InvalidArgumentException) {
+            $stmt = $this->db->prepare(
+                'SELECT id_parent FROM `category` WHERE id = ?'
+            );
+            $stmt->execute([$root->id]);
+
+            $this->assertNull($stmt->fetchColumn());
+            $this->assertFalse($this->db->inTransaction());
+        }
+    }
+
+    /**
+     * Comprueba que no puede trasladarse una categoría
+     * a un padre perteneciente a otro espacio.
+     */
+    public function testCannotMoveToAnotherSpace(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        [$other_space_id, $other_owner_id] = $this->prepareSpace();
+
+        $service = new CategoryService();
+        $category = $service->create(
+            $space_id, $owner_id, 'Categoría', 'expense'
+        );
+        $other_parent = $service->create(
+            $other_space_id, $other_owner_id,
+            'Otro padre', 'expense'
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+
+        $service->update(
+            $space_id, $owner_id, $category->id,
+            'Categoría', $other_parent->id, 0
+        );
+    }
+
+    /**
+     * Comprueba que no puede moverse una categoría
+     * a un padre de diferente tipo.
+     */
+    public function testCannotMoveToDifferentType(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+
+        $service = new CategoryService();
+        $expense = $service->create(
+            $space_id, $owner_id, 'Gastos', 'expense'
+        );
+        $income = $service->create(
+            $space_id, $owner_id, 'Ingresos', 'income'
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+
+        $service->update(
+            $space_id, $owner_id, $expense->id,
+            'Gastos', $income->id, 0
+        );
+    }
+
+    /**
+     * Comprueba que un usuario ajeno no puede editar.
+     */
+    public function testOutsiderCannotUpdate(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $outsider_id = $this->createUser();
+
+        $service = new CategoryService();
+        $category = $service->create(
+            $space_id, $owner_id, 'Hogar', 'expense'
+        );
+
+        $this->expectException(DomainException::class);
+
+        $service->update(
+            $space_id, $outsider_id, $category->id,
+            'Alterada', null, 0
+        );
+    }
+
+    /**
+     * Comprueba que un antiguo miembro no puede editar.
+     */
+    public function testInactiveMemberCannotUpdate(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $member_id = $this->createUser();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `space_member`
+             (id_space, id_user, left_at)
+             VALUES (?, ?, NOW())'
+        );
+        $stmt->execute([$space_id, $member_id]);
+
+        $service = new CategoryService();
+        $category = $service->create(
+            $space_id, $owner_id, 'Hogar', 'expense'
+        );
+
+        $this->expectException(DomainException::class);
+
+        $service->update(
+            $space_id, $member_id, $category->id,
+            'Alterada', null, 0
         );
     }
 

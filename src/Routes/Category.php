@@ -7,6 +7,7 @@ use Osumi\OsumiFramework\Core\OMiddleware;
 use Osumi\OsumiFramework\App\Middleware\LoginMiddleware;
 use Osumi\OsumiFramework\App\Module\Category\GetCategories\GetCategoriesComponent;
 use Osumi\OsumiFramework\App\Module\Category\CreateCategory\CreateCategoryComponent;
+use Osumi\OsumiFramework\App\Module\Category\UpdateCategory\UpdateCategoryComponent;
 
 ORoute::prefix('/categories', function(): void {
     ORoute::get('', GetCategoriesComponent::class, [
@@ -16,6 +17,12 @@ ORoute::prefix('/categories', function(): void {
     ]);
 
     ORoute::post('', CreateCategoryComponent::class, [
+        OMiddleware::PHASE_BEFORE => [
+            LoginMiddleware::class
+        ]
+    ]);
+
+    ORoute::post('/update', UpdateCategoryComponent::class, [
         OMiddleware::PHASE_BEFORE => [
             LoginMiddleware::class
         ]
