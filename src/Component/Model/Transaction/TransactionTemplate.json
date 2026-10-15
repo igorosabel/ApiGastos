@@ -1,0 +1,10 @@
+{
+    "id": {{ transaction.id | number }},
+    "space_id": {{ transaction.id_space | number }},
+    "user_id": {{ transaction.id_user | number }},
+    "category_id": {{ transaction.id_category | number }},
+    "type": {{ transaction.type | plain }},
+    "amount": {{ transaction.amount | plain }},
+    "concept": {{ transaction.concept | plain }},
+    "date": {{ transaction.date | plain }}
+}
