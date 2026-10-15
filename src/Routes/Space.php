@@ -12,6 +12,8 @@ use Osumi\OsumiFramework\App\Module\Space\AcceptInvitation\AcceptInvitationCompo
 use Osumi\OsumiFramework\App\Module\Space\GetInvitations\GetInvitationsComponent;
 use Osumi\OsumiFramework\App\Module\Space\RevokeInvitation\RevokeInvitationComponent;
 use Osumi\OsumiFramework\App\Module\Space\GetMembers\GetMembersComponent;
+use Osumi\OsumiFramework\App\Module\Space\LeaveSpace\LeaveSpaceComponent;
+use Osumi\OsumiFramework\App\Module\Space\RemoveMember\RemoveMemberComponent;
 
 ORoute::prefix('/spaces', function(): void {
     ORoute::get('', GetSpacesComponent::class, [
@@ -51,6 +53,18 @@ ORoute::prefix('/spaces', function(): void {
     ]);
 
     ORoute::get('/members', GetMembersComponent::class, [
+        OMiddleware::PHASE_BEFORE => [
+            LoginMiddleware::class
+        ]
+    ]);
+
+    ORoute::post('/members/leave', LeaveSpaceComponent::class, [
+        OMiddleware::PHASE_BEFORE => [
+            LoginMiddleware::class
+        ]
+    ]);
+
+    ORoute::post('/members/remove', RemoveMemberComponent::class, [
         OMiddleware::PHASE_BEFORE => [
             LoginMiddleware::class
         ]

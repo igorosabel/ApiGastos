@@ -26,7 +26,8 @@ class SpaceService extends OService {
         }
 
         $memberships = SpaceMember::where([
-            'id_user' => $user_id
+            'id_user' => $user_id,
+            'left_at' => null
         ]);
 
         $spaces = [];

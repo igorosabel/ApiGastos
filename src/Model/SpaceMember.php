@@ -42,6 +42,13 @@ class SpaceMember extends OModel {
 	)]
 	public ?string $joined_at;
 
+	#[OField(
+    comment: '',
+    nullable: true,
+    type: OField::DATETIME
+	)]
+	public ?string $left_at;
+
 	#[OCreatedAt(
 		comment: ''
 	)]

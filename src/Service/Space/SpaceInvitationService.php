@@ -89,23 +89,24 @@ class SpaceInvitationService extends OService {
            }
 
            // Comprobamos si el destinatario ya es miembro.
-           $users = User::where(['email' => $email]);
+           $stmt = $db->prepare(
+               'SELECT sm.id
+                FROM `space_member` sm
+                INNER JOIN `user` u ON u.id = sm.id_user
+                WHERE sm.id_space = :space_id
+                  AND u.email = :email
+                  AND sm.left_at IS NULL
+                LIMIT 1'
+           );
+           $stmt->execute([
+               'space_id' => $space_id,
+               'email' => $email
+           ]);
 
-           foreach ($users as $user) {
-               if ($user->id === null) {
-                   continue;
-               }
-
-               $member = SpaceMember::findOne([
-                   'id_space' => $space_id,
-                   'id_user' => $user->id
-               ]);
-
-               if ($member !== null) {
-                   throw new LogicException(
-                       'Este usuario ya pertenece al espacio.'
-                   );
-               }
+           if ($stmt->fetch(PDO::FETCH_ASSOC) !== false) {
+               throw new LogicException(
+                   'Este usuario ya pertenece al espacio.'
+               );
            }
 
            // Consulta directa y actual dentro de la transacción.
@@ -272,25 +273,71 @@ class SpaceInvitationService extends OService {
                 );
             }
 
-            $existing_member = SpaceMember::findOne([
-                'id_space' => $space->id,
-                'id_user' => $user_id
-            ]);
+            // Coordinamos la aceptación con las bajas y
+            // con la creación de nuevas invitaciones.
+            $stmt = $db->prepare(
+                'SELECT id
+                 FROM `space`
+                 WHERE id = :id
+                 FOR UPDATE'
+            );
+            $stmt->execute(['id' => $space->id]);
 
-            if ($existing_member !== null) {
+            if ($stmt->fetch(PDO::FETCH_ASSOC) === false) {
                 throw new LogicException(
-                    'Ya perteneces a este espacio.'
+                    'El espacio ya no está disponible.'
                 );
             }
 
-            $member = new SpaceMember();
-            $member->id_space = $space->id;
-            $member->id_user = $user_id;
+            $stmt = $db->prepare(
+                'SELECT id, left_at
+                 FROM `space_member`
+                 WHERE id_space = :space_id
+                   AND id_user = :user_id
+                 FOR UPDATE'
+            );
+            $stmt->execute([
+                'space_id' => $space->id,
+                'user_id' => $user_id
+            ]);
 
-            if (!$member->save()) {
-                throw new RuntimeException(
-                    'No se ha podido añadir al usuario al espacio.'
+            $membership = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (is_array($membership)) {
+                if ($membership['left_at'] === null) {
+                    throw new LogicException(
+                        'Ya perteneces a este espacio.'
+                    );
+                }
+
+                // Reactivamos la membresía anterior.
+                $stmt = $db->prepare(
+                    'UPDATE `space_member`
+                     SET left_at = NULL, joined_at = NOW()
+                     WHERE id = :id'
                 );
+                $stmt->execute([
+                    'id' => (int) $membership['id']
+                ]);
+
+                if ($stmt->rowCount() !== 1) {
+                    throw new RuntimeException(
+                        'No se ha podido reactivar la membresía.'
+                    );
+                }
+            }
+            else {
+                // Primera incorporación al espacio.
+                $member = new SpaceMember();
+                $member->id_space = $space->id;
+                $member->id_user = $user_id;
+                $member->left_at = null;
+
+                if (!$member->save()) {
+                    throw new RuntimeException(
+                        'No se ha podido añadir al usuario al espacio.'
+                    );
+                }
             }
 
             $invitation->accepted_at = date('Y-m-d H:i:s');
