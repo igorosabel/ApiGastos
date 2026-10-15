@@ -206,6 +206,92 @@ final class TransactionDTOTest extends TestCase {
     }
 
     /**
+     * Comprueba todos los filtros opcionales del listado.
+     */
+    public function testListWithFilters(): void {
+        $this->authenticateAs(10);
+
+        $dto = new GetTransactionsDTO(
+            $this->request('GET', [
+                'spaceId' => 25,
+                'dateFrom' => '2026-10-01',
+                'dateTo' => '2026-10-31',
+                'type' => 'expense',
+                'categoryId' => 30,
+                'page' => 2,
+                'pageSize' => 15
+            ])
+        );
+
+        $this->assertTrue($dto->isValid());
+        $this->assertSame(25, $dto->spaceId);
+        $this->assertSame('2026-10-01', $dto->dateFrom);
+        $this->assertSame('2026-10-31', $dto->dateTo);
+        $this->assertSame('expense', $dto->type);
+        $this->assertSame(30, $dto->categoryId);
+        $this->assertSame(2, $dto->page);
+        $this->assertSame(15, $dto->pageSize);
+        $this->assertSame(10, $dto->idUser);
+    }
+
+    /**
+     * Comprueba que los filtros pueden omitirse.
+     */
+    public function testListWithoutOptionalFilters(): void {
+        $this->authenticateAs(10);
+
+        $dto = new GetTransactionsDTO(
+            $this->request('GET', [
+                'spaceId' => 25
+            ])
+        );
+
+        $this->assertTrue($dto->isValid());
+        $this->assertNull($dto->dateFrom);
+        $this->assertNull($dto->dateTo);
+        $this->assertNull($dto->type);
+        $this->assertNull($dto->categoryId);
+        $this->assertNull($dto->page);
+        $this->assertNull($dto->pageSize);
+    }
+
+    /**
+     * Comprueba que la identidad del cliente no sustituye
+     * la identidad publicada por el middleware.
+     */
+    public function testListFiltersCannotOverrideUser(): void {
+        $this->authenticateAs(10);
+
+        $dto = new GetTransactionsDTO(
+            $this->request('GET', [
+                'spaceId' => 25,
+                'page' => 2,
+                'idUser' => 999
+            ])
+        );
+
+        $this->assertTrue($dto->isValid());
+        $this->assertSame(10, $dto->idUser);
+    }
+
+    /**
+     * Comprueba que la consulta exige un espacio.
+     */
+    public function testListWithFiltersRequiresSpace(): void {
+        $this->authenticateAs(10);
+
+        $dto = new GetTransactionsDTO(
+            $this->request('GET', [
+                'type' => 'expense',
+                'page' => 1
+            ])
+        );
+
+        $this->assertFalse($dto->isValid());
+        $this->assertNull($dto->spaceId);
+    }
+
+    /**
      * Publica un usuario autenticado mediante el middleware.
      *
      * @param int $id Identificador.

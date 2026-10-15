@@ -9,6 +9,24 @@ class GetTransactionsDTO extends ODTO {
     #[ODTOField(required: true)]
     public ?int $spaceId = null;
 
+    #[ODTOField]
+    public ?string $dateFrom = null;
+
+    #[ODTOField]
+    public ?string $dateTo = null;
+
+    #[ODTOField]
+    public ?string $type = null;
+
+    #[ODTOField]
+    public ?int $categoryId = null;
+
+    #[ODTOField]
+    public ?int $page = null;
+
+    #[ODTOField]
+    public ?int $pageSize = null;
+
     #[ODTOField(
         required: true,
         middleware: 'Login',

@@ -324,6 +324,318 @@ final class TransactionServiceIntegrationTest extends OrmIntegrationTestCase {
     }
 
     /**
+     * Comprueba los valores por defecto de paginación.
+     */
+    public function testSearchDefaultPagination(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $category_id = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+
+        $service = new TransactionService();
+
+        $created = $service->create(
+            $space_id, $owner_id, $category_id,
+            'expense', '12.50', 'Prueba', '2026-10-15'
+        );
+
+        $result = $service->search($space_id, $owner_id);
+
+        $this->assertSame(1, $result['total']);
+        $this->assertSame(1, $result['page']);
+        $this->assertSame(20, $result['page_size']);
+        $this->assertSame(1, $result['total_pages']);
+        $this->assertCount(1, $result['transactions']);
+        $this->assertSame(
+            $created->id,
+            $result['transactions'][0]->id
+        );
+        $this->assertSame(
+            '12.50',
+            $result['transactions'][0]->amount
+        );
+    }
+
+    /**
+     * Comprueba la separación de páginas y el desempate por ID.
+     */
+    public function testSearchPagesAndStableOrdering(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $category_id = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+        $service = new TransactionService();
+
+        $ids = [];
+
+        foreach (['10.00', '20.00', '30.00', '40.00', '50.00'] as $amount) {
+            $transaction = $service->create(
+                $space_id, $owner_id, $category_id,
+                'expense', $amount, null, '2026-10-15'
+            );
+            $ids[] = $transaction->id;
+        }
+
+        $first = $service->search(
+            $space_id, $owner_id,
+            page: 1, page_size: 2
+        );
+        $second = $service->search(
+            $space_id, $owner_id,
+            page: 2, page_size: 2
+        );
+        $third = $service->search(
+            $space_id, $owner_id,
+            page: 3, page_size: 2
+        );
+
+        $this->assertSame(5, $first['total']);
+        $this->assertSame(3, $first['total_pages']);
+
+        $this->assertSame(
+            [$ids[4], $ids[3]],
+            array_map(
+                static fn($item) => $item->id,
+                $first['transactions']
+            )
+        );
+        $this->assertSame(
+            [$ids[2], $ids[1]],
+            array_map(
+                static fn($item) => $item->id,
+                $second['transactions']
+            )
+        );
+        $this->assertSame(
+            [$ids[0]],
+            array_map(
+                static fn($item) => $item->id,
+                $third['transactions']
+            )
+        );
+    }
+
+    /**
+     * Comprueba que las fechas inicial y final son inclusivas.
+     */
+    public function testSearchDateRangeIsInclusive(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $category_id = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+        $service = new TransactionService();
+
+        foreach ([
+            '2026-09-30',
+            '2026-10-01',
+            '2026-10-15',
+            '2026-10-31',
+            '2026-11-01'
+        ] as $date) {
+            $service->create(
+                $space_id, $owner_id, $category_id,
+                'expense', '1.00', null, $date
+            );
+        }
+
+        $result = $service->search(
+            $space_id,
+            $owner_id,
+            date_from: '2026-10-01',
+            date_to: '2026-10-31'
+        );
+
+        $this->assertSame(3, $result['total']);
+
+        $this->assertSame(
+            ['2026-10-31', '2026-10-15', '2026-10-01'],
+            array_map(
+                static fn($item) => $item->date,
+                $result['transactions']
+            )
+        );
+    }
+
+    /**
+     * Comprueba que se combinan filtros de tipo y categoría.
+     */
+    public function testSearchCombinesTypeAndCategory(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+
+        $service = new TransactionService();
+        $expense_a = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+        $expense_b = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+        $income = $this->category(
+            $space_id, $owner_id, 'income'
+        );
+
+        $expected = $service->create(
+            $space_id, $owner_id, $expense_a,
+            'expense', '12.00', null, '2026-10-15'
+        );
+        $service->create(
+            $space_id, $owner_id, $expense_b,
+            'expense', '15.00', null, '2026-10-15'
+        );
+        $service->create(
+            $space_id, $owner_id, $income,
+            'income', '100.00', null, '2026-10-15'
+        );
+
+        $result = $service->search(
+            $space_id,
+            $owner_id,
+            type: 'expense',
+            category_id: $expense_a
+        );
+
+        $this->assertSame(1, $result['total']);
+        $this->assertSame(
+            $expected->id,
+            $result['transactions'][0]->id
+        );
+    }
+
+    /**
+     * Comprueba que los movimientos no se mezclan entre espacios.
+     */
+    public function testSearchDoesNotMixSpaces(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        [$other_space_id, $other_owner_id] = $this->prepareSpace();
+
+        $first_category = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+        $second_category = $this->category(
+            $other_space_id, $other_owner_id, 'expense'
+        );
+        $service = new TransactionService();
+
+        $service->create(
+            $space_id, $owner_id, $first_category,
+            'expense', '10.00', null, '2026-10-15'
+        );
+        $service->create(
+            $other_space_id, $other_owner_id, $second_category,
+            'expense', '20.00', null, '2026-10-15'
+        );
+
+        $result = $service->search($space_id, $owner_id);
+
+        $this->assertSame(1, $result['total']);
+        $this->assertSame(
+            $space_id,
+            $result['transactions'][0]->id_space
+        );
+    }
+
+    /**
+     * Comprueba los parámetros inválidos de consulta.
+     */
+    public function testSearchRejectsInvalidFilters(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $service = new TransactionService();
+
+        $invalid = [
+            ['date_from' => '2026-02-30'],
+            ['date_to' => '15/10/2026'],
+            [
+                'date_from' => '2026-11-01',
+                'date_to' => '2026-10-01'
+            ],
+            ['type' => 'other'],
+            ['category_id' => -1],
+            ['page' => 0],
+            ['page' => 100001],
+            ['page_size' => 0],
+            ['page_size' => 101]
+        ];
+
+        foreach ($invalid as $filters) {
+            try {
+                $service->search(
+                    $space_id,
+                    $owner_id,
+                    ...$filters
+                );
+                $this->fail(
+                    'Se ha admitido un filtro inválido: ' .
+                    json_encode($filters)
+                );
+            }
+            catch (InvalidArgumentException) {
+                $this->assertFalse($this->db->inTransaction());
+            }
+        }
+    }
+
+    /**
+     * Comprueba que una página fuera de rango devuelve vacío.
+     */
+    public function testSearchOutsideLastPage(): void {
+        [$space_id, $owner_id] = $this->prepareSpace();
+        $category_id = $this->category(
+            $space_id, $owner_id, 'expense'
+        );
+        $service = new TransactionService();
+
+        $service->create(
+            $space_id, $owner_id, $category_id,
+            'expense', '1.00', null, '2026-10-15'
+        );
+
+        $result = $service->search(
+            $space_id, $owner_id,
+            page: 3, page_size: 1
+        );
+
+        $this->assertSame(1, $result['total']);
+        $this->assertSame(1, $result['total_pages']);
+        $this->assertSame([], $result['transactions']);
+    }
+
+    /**
+     * Comprueba que no se consulta como usuario ajeno.
+     */
+    public function testOutsiderCannotSearch(): void {
+        [$space_id] = $this->prepareSpace();
+        $outsider_id = $this->createUser();
+
+        $this->expectException(DomainException::class);
+
+        (new TransactionService())->search(
+            $space_id,
+            $outsider_id
+        );
+    }
+
+    /**
+     * Comprueba que una baja revoca el acceso a la búsqueda.
+     */
+    public function testInactiveMemberCannotSearch(): void {
+        [$space_id] = $this->prepareSpace();
+        $guest_id = $this->createUser();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `space_member`
+             (id_space, id_user, left_at)
+             VALUES (?, ?, NOW())'
+        );
+        $stmt->execute([$space_id, $guest_id]);
+
+        $this->expectException(DomainException::class);
+
+        (new TransactionService())->search(
+            $space_id,
+            $guest_id
+        );
+    }
+
+    /**
      * Prepara un espacio con propietario autenticable.
      *
      * @return array{int, int} Identificadores.

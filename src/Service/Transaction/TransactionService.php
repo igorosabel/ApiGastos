@@ -232,4 +232,221 @@ class TransactionService extends OService {
 
         return $transactions;
     }
+
+    /**
+     * Busca movimientos filtrados y paginados de un espacio.
+     *
+     * @param int $space_id Espacio contable.
+     * @param int $user_id Usuario autenticado.
+     * @param string|null $date_from Fecha inicial incluida.
+     * @param string|null $date_to Fecha final incluida.
+     * @param string|null $type Tipo de movimiento.
+     * @param int|null $category_id Categoría concreta.
+     * @param int $page Número de página.
+     * @param int $page_size Registros por página.
+     * @return array{
+     *     transactions: list<FinancialTransaction>,
+     *     total: int,
+     *     page: int,
+     *     page_size: int,
+     *     total_pages: int
+     * }
+     */
+    public function search(
+        int $space_id,
+        int $user_id,
+        ?string $date_from = null,
+        ?string $date_to = null,
+        ?string $type = null,
+        ?int $category_id = null,
+        int $page = 1,
+        int $page_size = 20
+    ): array {
+        if ($space_id <= 0 || $user_id <= 0) {
+            throw new InvalidArgumentException(
+                'Los identificadores no son válidos.'
+            );
+        }
+
+        if (
+            $page < 1 ||
+            $page > 100000 ||
+            $page_size < 1 ||
+            $page_size > 100
+        ) {
+            throw new InvalidArgumentException(
+                'Los parámetros de paginación no son válidos.'
+            );
+        }
+
+        if (
+            $type !== null &&
+            !in_array($type, ['expense', 'income'], true)
+        ) {
+            throw new InvalidArgumentException(
+                'El tipo de movimiento no es válido.'
+            );
+        }
+
+        if ($category_id !== null && $category_id <= 0) {
+            throw new InvalidArgumentException(
+                'La categoría no es válida.'
+            );
+        }
+
+        foreach ([$date_from, $date_to] as $date) {
+            if ($date === null) {
+                continue;
+            }
+
+            $parsed = DateTimeImmutable::createFromFormat(
+                '!Y-m-d',
+                $date
+            );
+
+            if (
+                $parsed === false ||
+                $parsed->format('Y-m-d') !== $date
+            ) {
+                throw new InvalidArgumentException(
+                    'El formato de las fechas no es válido.'
+                );
+            }
+        }
+
+        if (
+            $date_from !== null &&
+            $date_to !== null &&
+            $date_from > $date_to
+        ) {
+            throw new InvalidArgumentException(
+                'La fecha inicial no puede superar la final.'
+            );
+        }
+
+        $db = ODB::getInstance();
+
+        // Comprobamos la pertenencia activa antes de consultar datos.
+        $stmt = $db->prepare(
+            'SELECT id FROM `space_member`
+             WHERE id_space = :space_id
+               AND id_user = :user_id
+               AND left_at IS NULL
+             LIMIT 1'
+        );
+
+        $stmt->execute([
+            'space_id' => $space_id,
+            'user_id' => $user_id
+        ]);
+
+        if ($stmt->fetch(PDO::FETCH_ASSOC) === false) {
+            throw new DomainException(
+                'No tienes acceso a este espacio.'
+            );
+        }
+
+        $where = ['id_space = :space_id'];
+        $params = [
+            'space_id' => [$space_id, PDO::PARAM_INT]
+        ];
+
+        if ($date_from !== null) {
+            $where[] = '`date` >= :date_from';
+            $params['date_from'] = [$date_from, PDO::PARAM_STR];
+        }
+
+        if ($date_to !== null) {
+            $where[] = '`date` <= :date_to';
+            $params['date_to'] = [$date_to, PDO::PARAM_STR];
+        }
+
+        if ($type !== null) {
+            $where[] = '`type` = :type';
+            $params['type'] = [$type, PDO::PARAM_STR];
+        }
+
+        if ($category_id !== null) {
+            $where[] = 'id_category = :category_id';
+            $params['category_id'] = [
+                $category_id,
+                PDO::PARAM_INT
+            ];
+        }
+
+        $where_sql = implode(' AND ', $where);
+
+        $bind_filters = static function(
+            \PDOStatement $stmt,
+            array $params
+        ): void {
+            foreach ($params as $name => [$value, $pdo_type]) {
+                $stmt->bindValue(
+                    ':' . $name,
+                    $value,
+                    $pdo_type
+                );
+            }
+        };
+
+        // El total usa exactamente los mismos filtros.
+        $stmt = $db->prepare(
+            'SELECT COUNT(*)
+             FROM `financial_transaction`
+             WHERE ' . $where_sql
+        );
+        $bind_filters($stmt, $params);
+        $stmt->execute();
+
+        $total = (int) $stmt->fetchColumn();
+
+        // El ID desempata movimientos de la misma fecha.
+        $offset = ($page - 1) * $page_size;
+
+        $stmt = $db->prepare(
+            'SELECT id, id_space, id_user, id_category,
+                    type, amount, concept, date
+             FROM `financial_transaction`
+             WHERE ' . $where_sql . '
+             ORDER BY `date` DESC, id DESC
+             LIMIT :page_size OFFSET :offset'
+        );
+
+        $bind_filters($stmt, $params);
+        $stmt->bindValue(
+            ':page_size',
+            $page_size,
+            PDO::PARAM_INT
+        );
+        $stmt->bindValue(
+            ':offset',
+            $offset,
+            PDO::PARAM_INT
+        );
+        $stmt->execute();
+
+        $transactions = [];
+
+        while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
+            $transaction = new FinancialTransaction();
+            $transaction->id = (int) $row['id'];
+            $transaction->id_space = (int) $row['id_space'];
+            $transaction->id_user = (int) $row['id_user'];
+            $transaction->id_category = (int) $row['id_category'];
+            $transaction->type = $row['type'];
+            $transaction->amount = (string) $row['amount'];
+            $transaction->concept = $row['concept'];
+            $transaction->date = $row['date'];
+
+            $transactions[] = $transaction;
+        }
+
+        return [
+            'transactions' => $transactions,
+            'total' => $total,
+            'page' => $page,
+            'page_size' => $page_size,
+            'total_pages' => (int) ceil($total / $page_size)
+        ];
+    }
 }

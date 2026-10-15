@@ -15,6 +15,10 @@ class GetTransactionsComponent extends OComponent {
 
     public bool $success = false;
     public ?TransactionListComponent $list = null;
+    public int $total = 0;
+    public int $page = 1;
+    public int $page_size = 20;
+    public int $total_pages = 0;
     public ?string $error = null;
     public ?string $message = null;
 
@@ -30,7 +34,7 @@ class GetTransactionsComponent extends OComponent {
     }
 
     /**
-     * Consulta los movimientos del espacio autorizado.
+     * Consulta los movimientos filtrados y paginados.
      *
      * @param GetTransactionsDTO $dto Datos de entrada.
      * @return void
@@ -42,16 +46,28 @@ class GetTransactionsComponent extends OComponent {
             $dto->idUser === null
         ) {
             $this->error = 'validation_error';
-            $this->message = 'El espacio es obligatorio.';
+            $this->message = 'Los parámetros no son válidos.';
             OMiddleware::setStatusCode(400);
             return;
         }
 
         try {
-            $this->list->list = $this->transaction_service->getBySpace(
+            $result = $this->transaction_service->search(
                 $dto->spaceId,
-                $dto->idUser
+                $dto->idUser,
+                $dto->dateFrom,
+                $dto->dateTo,
+                $dto->type,
+                $dto->categoryId,
+                $dto->page ?? 1,
+                $dto->pageSize ?? 20
             );
+
+            $this->list->list = $result['transactions'];
+            $this->total = $result['total'];
+            $this->page = $result['page'];
+            $this->page_size = $result['page_size'];
+            $this->total_pages = $result['total_pages'];
             $this->success = true;
         }
         catch (InvalidArgumentException $e) {
