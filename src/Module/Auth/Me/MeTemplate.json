@@ -1,0 +1,8 @@
+{
+    "success": {{ success | bool }},
+    "user": {
+        "id": {{ id | number }},
+        "name": {{ name | plain }},
+        "email": {{ email | plain }}
+    }
+}
