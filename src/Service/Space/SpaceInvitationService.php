@@ -16,112 +16,171 @@ use Osumi\OsumiFramework\App\Model\User;
 use Osumi\OsumiFramework\Core\OService;
 
 class SpaceInvitationService extends OService {
-    /**
-     * Crea una invitación para un espacio compartido.
-     *
-     * @param int $space_id Identificador del espacio.
-     * @param int $user_id Identificador del usuario autenticado.
-     * @param string $email Correo al que va dirigida.
-     * @return array{invitation: SpaceInvitation, token: string}
-     */
-    public function create(
-        int $space_id,
-        int $user_id,
-        string $email
-    ): array {
-        if ($space_id <= 0 || $user_id <= 0) {
-            throw new InvalidArgumentException(
-                'Los identificadores no son válidos.'
-            );
-        }
+  /**
+    * Crea una invitación para un espacio compartido.
+    *
+    * Serializa las creaciones de un mismo espacio mediante
+    * un bloqueo de fila para evitar invitaciones duplicadas.
+    *
+    * @param int $space_id Identificador del espacio.
+    * @param int $user_id Identificador del usuario autenticado.
+    * @param string $email Correo al que va dirigida.
+    * @return array{invitation: SpaceInvitation, token: string}
+    */
+   public function create(
+       int $space_id,
+       int $user_id,
+       string $email
+   ): array {
+       if ($space_id <= 0 || $user_id <= 0) {
+           throw new InvalidArgumentException(
+               'Los identificadores no son válidos.'
+           );
+       }
 
-        $email = mb_strtolower(trim($email));
+       $email = mb_strtolower(trim($email));
 
-        if (
-            mb_strlen($email) > 254 ||
-            !filter_var($email, FILTER_VALIDATE_EMAIL)
-        ) {
-            throw new InvalidArgumentException(
-                'El correo electrónico no es válido.'
-            );
-        }
+       if (
+           mb_strlen($email) > 254 ||
+           !filter_var($email, FILTER_VALIDATE_EMAIL)
+       ) {
+           throw new InvalidArgumentException(
+               'El correo electrónico no es válido.'
+           );
+       }
 
-        $space = Space::findOne(['id' => $space_id]);
+       $db = ODB::getInstance();
 
-        if (
-            $space === null ||
-            $space->type !== 'shared' ||
-            $space->owner_id !== $user_id
-        ) {
-            throw new DomainException(
-                'No tienes permiso para invitar a este espacio.'
-            );
-        }
+       if (!$db->beginTransaction()) {
+           throw new RuntimeException(
+               'No se ha podido iniciar la transacción.'
+           );
+       }
 
-        $users = User::where(['email' => $email]);
+       try {
+           // Todas las creaciones del mismo espacio adquieren
+           // este bloqueo antes de comprobar duplicados.
+           $stmt = $db->prepare(
+               'SELECT id, type, owner_id
+                FROM `space`
+                WHERE id = :space_id
+                FOR UPDATE'
+           );
 
-        foreach ($users as $user) {
-            if ($user->id === null) {
-                continue;
-            }
+           if (
+               $stmt === false ||
+               !$stmt->execute(['space_id' => $space_id])
+           ) {
+               throw new RuntimeException(
+                   'No se ha podido consultar el espacio.'
+               );
+           }
 
-            $member = SpaceMember::findOne([
-                'id_space' => $space_id,
-                'id_user' => $user->id
-            ]);
+           $space = $stmt->fetch(PDO::FETCH_ASSOC);
 
-            if ($member !== null) {
-                throw new LogicException(
-                    'Este usuario ya pertenece al espacio.'
-                );
-            }
-        }
+           if (
+               !is_array($space) ||
+               $space['type'] !== 'shared' ||
+               (int) $space['owner_id'] !== $user_id
+           ) {
+               throw new DomainException(
+                   'No tienes permiso para invitar a este espacio.'
+               );
+           }
 
-        $invitations = SpaceInvitation::where([
-            'id_space' => $space_id,
-            'email' => $email
-        ]);
+           // Comprobamos si el destinatario ya es miembro.
+           $users = User::where(['email' => $email]);
 
-        $now = time();
+           foreach ($users as $user) {
+               if ($user->id === null) {
+                   continue;
+               }
 
-        foreach ($invitations as $invitation) {
-            if (
-                $invitation->accepted_at === null &&
-                $invitation->revoked_at === null &&
-                $invitation->expires_at !== null &&
-                strtotime($invitation->expires_at) > $now
-            ) {
-                throw new LogicException(
-                    'Ya existe una invitación pendiente para este correo.'
-                );
-            }
-        }
+               $member = SpaceMember::findOne([
+                   'id_space' => $space_id,
+                   'id_user' => $user->id
+               ]);
 
-        $token = bin2hex(random_bytes(32));
+               if ($member !== null) {
+                   throw new LogicException(
+                       'Este usuario ya pertenece al espacio.'
+                   );
+               }
+           }
 
-        $invitation = new SpaceInvitation();
-        $invitation->id_space = $space_id;
-        $invitation->email = $email;
-        $invitation->token_hash = hash('sha256', $token);
-        $invitation->invited_by = $user_id;
-        $invitation->expires_at = date(
-            'Y-m-d H:i:s',
-            $now + (7 * 24 * 60 * 60)
-        );
-        $invitation->accepted_at = null;
-        $invitation->revoked_at = null;
+           // Consulta directa y actual dentro de la transacción.
+           // Evita reutilizar resultados cacheados del ORM.
+           $stmt = $db->prepare(
+               'SELECT id
+                FROM `space_invitation`
+                WHERE id_space = :space_id
+                  AND email = :email
+                  AND accepted_at IS NULL
+                  AND revoked_at IS NULL
+                  AND expires_at > NOW()
+                LIMIT 1'
+           );
 
-        if (!$invitation->save() || $invitation->id === null) {
-            throw new RuntimeException(
-                'No se ha podido crear la invitación.'
-            );
-        }
+           if (
+               $stmt === false ||
+               !$stmt->execute([
+                   'space_id' => $space_id,
+                   'email' => $email
+               ])
+           ) {
+               throw new RuntimeException(
+                   'No se han podido comprobar las invitaciones.'
+               );
+           }
 
-        return [
-            'invitation' => $invitation,
-            'token' => $token
-        ];
-    }
+           if ($stmt->fetch(PDO::FETCH_ASSOC) !== false) {
+               throw new LogicException(
+                   'Ya existe una invitación pendiente para este correo.'
+               );
+           }
+
+           $token = bin2hex(random_bytes(32));
+
+           $invitation = new SpaceInvitation();
+           $invitation->id_space = $space_id;
+           $invitation->email = $email;
+           $invitation->token_hash = hash('sha256', $token);
+           $invitation->invited_by = $user_id;
+           $invitation->expires_at = date(
+               'Y-m-d H:i:s',
+               time() + (7 * 24 * 60 * 60)
+           );
+           $invitation->accepted_at = null;
+           $invitation->revoked_at = null;
+
+           if (
+               !$invitation->save() ||
+               $invitation->id === null
+           ) {
+               throw new RuntimeException(
+                   'No se ha podido crear la invitación.'
+               );
+           }
+
+           if (!$db->commit()) {
+               throw new RuntimeException(
+                   'No se ha podido confirmar la invitación.'
+               );
+           }
+
+           return [
+               'invitation' => $invitation,
+               'token' => $token
+           ];
+       }
+       catch (Throwable $e) {
+           if ($db->inTransaction()) {
+               $db->rollBack();
+           }
+
+           throw $e;
+       }
+   }
 
     /**
      * Acepta una invitación y añade al destinatario como miembro.
