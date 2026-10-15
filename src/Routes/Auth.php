@@ -2,7 +2,11 @@
 
 namespace Osumi\OsumiFramework\Routes;
 
-use Osumi\OsumiFramework\App\Module\Auth\Register\RegisterComponent;
 use Osumi\OsumiFramework\Routing\ORoute;
+use Osumi\OsumiFramework\App\Module\Auth\Register\RegisterComponent;
+use Osumi\OsumiFramework\App\Module\Auth\Login\LoginComponent;
 
-ORoute::post('/auth/register', RegisterComponent::class);
+ORoute::prefix('/auth', function(): void {
+  ORoute::post('/register', RegisterComponent::class);
+  ORoute::post('/login',    LoginComponent::class);
+});

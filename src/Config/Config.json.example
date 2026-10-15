@@ -22,7 +22,6 @@
 		"pass": "password"
 	},
 	"extra": {
-		"key": "value",
-		"foo": "bar"
+		"jwt_secret": "value"
 	}
 }

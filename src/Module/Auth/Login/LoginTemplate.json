@@ -1,0 +1,12 @@
+{
+    "success": {{ success | bool }},
+    "token": {{ token | plain }},
+    "expires_at": {{ expires_at | number }},
+    "user": {
+        "id": {{ user_id | number }},
+        "name": {{ name | plain }},
+        "email": {{ email | plain }}
+    },
+    "error": {{ error | plain }},
+    "message": {{ message | plain }}
+}
