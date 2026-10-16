@@ -141,7 +141,7 @@ class OccurrenceService extends OService {
             }
 
             if ((int) $recurring['active'] !== 1) {
-                throw new InvalidArgumentException(
+                throw new OccurrenceNotEligibleException(
                     'La plantilla está desactivada.'
                 );
             }
@@ -163,7 +163,7 @@ class OccurrenceService extends OService {
                 $period < $creation_month ||
                 $period < $start_month
             ) {
-                throw new InvalidArgumentException(
+                throw new OccurrenceNotEligibleException(
                     'El periodo es anterior al inicio permitido.'
                 );
             }
@@ -186,7 +186,7 @@ class OccurrenceService extends OService {
                     $scheduled_date > $recurring['end_date']
                 )
             ) {
-                throw new InvalidArgumentException(
+                throw new OccurrenceNotEligibleException(
                     'La mensualidad queda fuera de las fechas de la plantilla.'
                 );
             }

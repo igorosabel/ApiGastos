@@ -7,6 +7,8 @@ use Osumi\OsumiFramework\App\Service\Recurring\OccurrenceService;
 use Osumi\OsumiFramework\App\Service\Recurring\RecurringService;
 use Osumi\OsumiFramework\App\Service\Recurring\SpaceOccurrenceService;
 use Osumi\OsumiFramework\App\Service\Space\SpaceService;
+use Osumi\OsumiFramework\App\Service\Recurring\OccurrenceNotEligibleException;
+use Osumi\OsumiFramework\App\Model\RecurringTransaction;
 
 final class SpaceOccurrenceServiceIntegrationTest extends OrmIntegrationTestCase {
     /** @var list<int> */
@@ -586,6 +588,149 @@ final class SpaceOccurrenceServiceIntegrationTest extends OrmIntegrationTestCase
     }
 
     /**
+     * Comprueba los tres resultados posibles del lote.
+     */
+    public function testBulkCountsCreatedExistingAndSkipped(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+        $next_period = (new DateTimeImmutable($period))
+            ->modify('+1 month')
+            ->format('Y-m-d');
+
+        $existing = $this->createRecurring(
+            $space_id, $owner_id, $category_id,
+            'Existente', 5, $period
+        );
+
+        $this->createRecurring(
+            $space_id, $owner_id, $category_id,
+            'Nueva', 10, $period
+        );
+
+        $this->createRecurring(
+            $space_id, $owner_id, $category_id,
+            'Fuera de periodo', 15, $next_period
+        );
+
+        (new OccurrenceService())->generate(
+            $space_id, $owner_id, $existing->id, $period
+        );
+
+        $result = (new SpaceOccurrenceService())->generate(
+            $space_id, $owner_id, $period
+        );
+
+        $this->assertSame([
+            'created' => 1,
+            'existing' => 1,
+            'skipped' => 1,
+            'total' => 3
+        ], $result);
+
+        $this->assertSame(2, $this->countOccurrences($space_id));
+        $this->assertSame(0, $this->countTransactions($space_id));
+        $this->assertFalse($this->db->inTransaction());
+    }
+
+    /**
+     * Una fecha programada anterior al inicio real
+     * se clasifica como plantilla omitida.
+     */
+    public function testBulkSkipsScheduledDateBeforeStart(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+
+        $this->createRecurring(
+            $space_id, $owner_id, $category_id,
+            'Comienzo posterior', 10,
+            substr($period, 0, 8) . '20'
+        );
+
+        $result = (new SpaceOccurrenceService())->generate(
+            $space_id, $owner_id, $period
+        );
+
+        $this->assertSame([
+            'created' => 0,
+            'existing' => 0,
+            'skipped' => 1,
+            'total' => 1
+        ], $result);
+
+        $this->assertSame(0, $this->countOccurrences($space_id));
+        $this->assertFalse($this->db->inTransaction());
+    }
+
+    /**
+     * Una fecha programada posterior al fin de la
+     * plantilla también se contabiliza como omitida.
+     */
+    public function testBulkSkipsScheduledDateAfterEnd(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+
+        (new RecurringService())->create(
+            $space_id,
+            $owner_id,
+            $category_id,
+            'expense',
+            '50.00',
+            'Final anterior al cargo',
+            20,
+            $period,
+            substr($period, 0, 8) . '10'
+        );
+
+        $result = (new SpaceOccurrenceService())->generate(
+            $space_id, $owner_id, $period
+        );
+
+        $this->assertSame([
+            'created' => 0,
+            'existing' => 0,
+            'skipped' => 1,
+            'total' => 1
+        ], $result);
+
+        $this->assertSame(0, $this->countOccurrences($space_id));
+        $this->assertFalse($this->db->inTransaction());
+    }
+
+    /**
+     * La generación individual distingue una plantilla
+     * no elegible sin abandonar InvalidArgumentException.
+     */
+    public function testIndividualGenerationSignalsIneligiblePeriod(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+
+        $next_period = (new DateTimeImmutable($period))
+            ->modify('+1 month')
+            ->format('Y-m-d');
+
+        $recurring = $this->createRecurring(
+            $space_id, $owner_id, $category_id,
+            'Comienzo futuro', 10, $next_period
+        );
+
+        $this->expectException(
+            OccurrenceNotEligibleException::class
+        );
+
+        (new OccurrenceService())->generate(
+            $space_id, $owner_id, $recurring->id, $period
+        );
+    }
+
+    /**
      * Crea el espacio y su categoría de gasto.
      *
      * @return array{int, int, int}
@@ -618,7 +763,7 @@ final class SpaceOccurrenceServiceIntegrationTest extends OrmIntegrationTestCase
      * @param string $concept Concepto.
      * @param int $day Día nominal.
      * @param string $start_date Fecha de inicio.
-     * @return \Osumi\OsumiFramework\App\Model\RecurringTransaction
+     * @return RecurringTransaction
      */
     private function createRecurring(
         int $space_id,
@@ -627,7 +772,7 @@ final class SpaceOccurrenceServiceIntegrationTest extends OrmIntegrationTestCase
         string $concept,
         int $day,
         string $start_date
-    ): \Osumi\OsumiFramework\App\Model\RecurringTransaction {
+    ): RecurringTransaction {
         return (new RecurringService())->create(
             $space_id, $user_id, $category_id,
             'expense', '50.00', $concept,

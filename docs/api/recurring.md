@@ -55,8 +55,7 @@ Los contadores devueltos son:
 
 - `created`: ocurrencias nuevas.
 - `existing`: ocurrencias encontradas.
-- `skipped`: plantillas activas fuera de
-  los límites temporales aplicables.
+- `skipped`: plantillas inicialmente activas que no permiten crear una nueva ocurrencia por sus fechas o porque fueron desactivadas antes de procesarse.
 - `total`: plantillas activas evaluadas.
 
 Una plantilla inactiva no aparece en

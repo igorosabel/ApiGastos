@@ -11,8 +11,12 @@ use PDO;
 
 class SpaceOccurrenceService extends OService {
     /**
-     * Genera las ocurrencias de las plantillas activas de un
-     * espacio para un mes concreto.
+     * Genera las ocurrencias del mes para las plantillas
+     * que estaban activas al comenzar la consulta.
+     *
+     * Cada plantilla se procesa independientemente.
+     * La elegibilidad se comprueba dentro de
+     * OccurrenceService, bajo sus bloqueos habituales.
      *
      * @param int $space_id Espacio contable.
      * @param int $user_id Usuario autenticado.
@@ -52,9 +56,9 @@ class SpaceOccurrenceService extends OService {
 
         $db = ODB::getInstance();
 
-        // Autorización inicial antes de acceder al catálogo.
-        // La generación individual volverá a comprobarla
-        // dentro de su propia transacción.
+        // Comprobación inicial de autorización.
+        // OccurrenceService la repite dentro de su
+        // transacción para cada plantilla.
         $stmt = $db->prepare(
             'SELECT id FROM `space_member`
              WHERE id_space = :space_id
@@ -74,11 +78,11 @@ class SpaceOccurrenceService extends OService {
             );
         }
 
-        // Fotografía de los IDs activos al iniciar el lote.
-        // Las escrituras posteriores se validan en generate().
+        // Seleccionar únicamente los identificadores.
+        // No usar fechas o estados de esta consulta
+        // para decidir si una mensualidad es válida.
         $stmt = $db->prepare(
-            'SELECT id, day_of_month, start_date,
-                    end_date, created_at
+            'SELECT id
              FROM `recurring_transaction`
              WHERE id_space = :space_id
                AND active = 1
@@ -86,94 +90,37 @@ class SpaceOccurrenceService extends OService {
         );
 
         $stmt->execute(['space_id' => $space_id]);
-        $templates = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $ids = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
         $result = [
             'created' => 0,
             'existing' => 0,
             'skipped' => 0,
-            'total' => count($templates)
+            'total' => count($ids)
         ];
 
         $occurrence_service = new OccurrenceService();
 
-        foreach ($templates as $template) {
-            $recurring_id = (int) $template['id'];
-
-            // Si ya existe una ocurrencia, tiene prioridad
-            // sobre los límites actuales de la plantilla.
-            // Puede estar pendiente, confirmada u omitida.
-            $stmt = $db->prepare(
-                'SELECT id FROM `recurring_occurrence`
-                 WHERE id_recurring_transaction = :recurring_id
-                   AND period = :period
-                 LIMIT 1'
-            );
-
-            $stmt->execute([
-                'recurring_id' => $recurring_id,
-                'period' => $period
-            ]);
-
-            if ($stmt->fetch(PDO::FETCH_ASSOC) !== false) {
-                // La llamada individual realiza la comprobación
-                // definitiva bajo el bloqueo correspondiente.
+        foreach ($ids as $id) {
+            try {
+                // La generación individual comprueba
+                // las fechas y el estado actual de la
+                // plantilla bajo los bloqueos de OFW.
                 $generated = $occurrence_service->generate(
                     $space_id,
                     $user_id,
-                    $recurring_id,
+                    (int) $id,
                     $period
                 );
-
-                if ($generated['created']) {
-                    $result['created']++;
-                }
-                else {
-                    $result['existing']++;
-                }
-
-                continue;
             }
-
-            // Filtrar únicamente los meses inequívocamente
-            // incompatibles. La decisión definitiva de crear
-            // se mantiene en OccurrenceService.
-            $creation_month = substr(
-                (string) $template['created_at'], 0, 7
-            ) . '-01';
-
-            $start_month = substr(
-                (string) $template['start_date'], 0, 7
-            ) . '-01';
-
-            $day = min(
-                (int) $template['day_of_month'],
-                (int) $month->format('t')
-            );
-
-            $scheduled_date = $month->format('Y-m-') .
-                str_pad((string) $day, 2, '0', STR_PAD_LEFT);
-
-            if (
-                $period < $creation_month ||
-                $period < $start_month ||
-                $scheduled_date < $template['start_date'] ||
-                (
-                    $template['end_date'] !== null &&
-                    $scheduled_date > $template['end_date']
-                )
-            ) {
+            catch (OccurrenceNotEligibleException) {
+                // Una plantilla puede haber sido editada
+                // o desactivada después del listado.
+                // No debe interrumpir el resto del lote.
                 $result['skipped']++;
                 continue;
             }
-
-            // Revalidación y persistencia bajo bloqueo.
-            $generated = $occurrence_service->generate(
-                $space_id,
-                $user_id,
-                $recurring_id,
-                $period
-            );
 
             if ($generated['created']) {
                 $result['created']++;
