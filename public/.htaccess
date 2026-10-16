@@ -1,4 +1,10 @@
-Options +FollowSymLinks +ExecCGI
+Options -Indexes +FollowSymLinks +ExecCGI
+
+# Impedir el acceso HTTP a archivos ocultos.
+# Incluye .php-ini, .php-version y otros dotfiles.
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
 
 <IfModule mod_rewrite.c>
     RewriteEngine On

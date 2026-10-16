@@ -63,6 +63,59 @@ final class ApacheRewriteTest extends TestCase {
     }
 
     /**
+     * Comprueba que Apache no permite generar
+     * listados automáticos de directorios.
+     */
+    public function testDirectoryIndexingIsDisabled(): void {
+        $rules = $this->loadRules();
+
+        $this->assertStringContainsString(
+            'Options -Indexes +FollowSymLinks +ExecCGI',
+            $rules
+        );
+    }
+
+    /**
+     * Comprueba que los archivos ocultos quedan
+     * protegidos frente a peticiones HTTP.
+     */
+    public function testHiddenFilesAreDenied(): void {
+        $rules = $this->loadRules();
+
+        $start = strpos(
+            $rules,
+            '<FilesMatch "^\.">'
+        );
+
+        $this->assertNotFalse(
+            $start,
+            'Falta la regla de protección de archivos ocultos.'
+        );
+
+        $end = strpos(
+            $rules,
+            '</FilesMatch>',
+            $start
+        );
+
+        $this->assertNotFalse(
+            $end,
+            'El bloque FilesMatch no está cerrado.'
+        );
+
+        $block = substr(
+            $rules,
+            $start,
+            $end - $start
+        );
+
+        $this->assertStringContainsString(
+            'Require all denied',
+            $block
+        );
+    }
+
+    /**
      * Recupera las reglas de Apache del proyecto.
      *
      * @return string Contenido del archivo .htaccess.

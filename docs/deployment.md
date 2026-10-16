@@ -239,6 +239,59 @@ evitando bucles con posibles proxies inversos.
 No considerar segura una instalación que permita
 enviar contraseñas o JWT sobre HTTP.
 
+### Protección de archivos estáticos
+
+El archivo `public/.htaccess` incorpora dos medidas
+adicionales de seguridad para Apache:
+
+- Deshabilitar el listado automático de directorios
+  mediante `Options -Indexes`.
+- Denegar el acceso HTTP a archivos ocultos mediante
+  `FilesMatch` y `Require all denied`.
+
+Esto incluye archivos como:
+
+- `.php-ini`
+- `.php-version`
+- `.htaccess`
+
+Estas reglas requieren Apache 2.4 y una configuración
+que permita utilizarlas desde `.htaccess`.
+
+### Instalaciones con Nginx y Plesk
+
+En instalaciones que utilizan Nginx como proxy
+inverso, algunas peticiones de archivos estáticos
+pueden ser atendidas directamente por Nginx.
+
+En esos casos, las reglas de `.htaccess` no bastan.
+
+Antes de publicar una instalación debe comprobarse
+que Nginx tampoco permite descargar archivos
+ocultos ni listar directorios.
+
+No modificar globalmente la configuración Nginx
+de Plesk sin verificar primero las directivas
+existentes del dominio.
+
+### Verificación HTTP
+
+Comprobar desde fuera del servidor:
+
+- Que los archivos ocultos no pueden descargarse.
+- Que los directorios públicos no permiten listar
+  automáticamente su contenido.
+- Que las rutas normales de OFW siguen funcionando.
+- Que la cabecera Authorization continúa llegando
+  al middleware de autenticación.
+
+Las respuestas a solicitudes de archivos protegidos
+deberían ser HTTP 403 o 404.
+
+Una respuesta 200 que entregue el contenido de
+un archivo oculto constituye un problema de
+configuración que debe resolverse antes de la release.
+
 ## Configuración específica de Plesk
 
 Los archivos de `public/` pueden contener
