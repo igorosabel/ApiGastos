@@ -1,0 +1,18 @@
+{
+    "space_id": {{ space_id | number }},
+    "month": {{ month | plain }},
+    "actual": {{ actual }},
+    "pending": {
+        "income": {{ pending_income | plain }},
+        "expense": {{ pending_expense | plain }},
+        "balance": {{ pending_balance | plain }},
+        "income_count": {{ pending_income_count | number }},
+        "expense_count": {{ pending_expense_count | number }},
+        "occurrence_count": {{ pending_occurrence_count | number }}
+    },
+    "projected": {
+        "income": {{ projected_income | plain }},
+        "expense": {{ projected_expense | plain }},
+        "balance": {{ projected_balance | plain }}
+    }
+}

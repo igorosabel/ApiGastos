@@ -711,6 +711,444 @@ final class ReportServiceIntegrationTest extends OrmIntegrationTestCase {
     }
 
     /**
+     * Separa movimientos reales, pendientes y resueltos.
+     *
+     * Las confirmadas cuentan exclusivamente como
+     * movimientos reales y las omitidas no cuentan.
+     */
+    public function testForecastSeparatesActualPendingAndResolved(): void {
+        [$space, $user, $expense, $income] = $this->prepareSpace();
+
+        $this->transaction(
+            $space, $user, $income, 'income',
+            '1000.00', '2026-10-01'
+        );
+        $this->transaction(
+            $space, $user, $expense, 'expense',
+            '100.00', '2026-10-02'
+        );
+
+        $this->createForecastOccurrence(
+            $space, $income, 'income',
+            '200.05', '2026-10-15'
+        );
+        $this->createForecastOccurrence(
+            $space, $expense, 'expense',
+            '300.10', '2026-10-16'
+        );
+
+        $skipped_id = $this->createForecastOccurrence(
+            $space, $expense, 'expense',
+            '25.00', '2026-10-17'
+        );
+        $confirmed_id = $this->createForecastOccurrence(
+            $space, $expense, 'expense',
+            '40.00', '2026-10-18'
+        );
+
+        $occurrence_service =
+            new \Osumi\OsumiFramework\App\Service\Recurring\OccurrenceService();
+
+        $occurrence_service->resolve(
+            $space, $user, $skipped_id, 'skip'
+        );
+        $occurrence_service->resolve(
+            $space, $user, $confirmed_id, 'confirm'
+        );
+
+        $result = (new ReportService())->getMonthlyForecast(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame($space, $result['space_id']);
+        $this->assertSame('2026-10', $result['month']);
+
+        // Real: ingreso manual y dos gastos,
+        // uno manual y otro recurrente confirmado.
+        $this->assertSame('1000.00', $result['actual']['income']);
+        $this->assertSame('140.00', $result['actual']['expense']);
+        $this->assertSame('860.00', $result['actual']['balance']);
+        $this->assertSame(3, $result['actual']['transaction_count']);
+
+        // Pendiente: solo las dos ocurrencias no resueltas.
+        $this->assertSame('200.05', $result['pending_income']);
+        $this->assertSame('300.10', $result['pending_expense']);
+        $this->assertSame('-100.05', $result['pending_balance']);
+        $this->assertSame(1, $result['pending_income_count']);
+        $this->assertSame(1, $result['pending_expense_count']);
+        $this->assertSame(2, $result['pending_occurrence_count']);
+
+        // Proyección: real + pendiente, con precisión exacta.
+        $this->assertSame('1200.05', $result['projected_income']);
+        $this->assertSame('440.10', $result['projected_expense']);
+        $this->assertSame('759.95', $result['projected_balance']);
+    }
+
+    /**
+     * Confirmar una pendiente la traslada a la contabilidad
+     * real sin duplicar el resultado proyectado.
+     */
+    public function testForecastAfterConfirmation(): void {
+        [$space, $user, $expense, $income] = $this->prepareSpace();
+
+        $this->transaction(
+            $space, $user, $income, 'income',
+            '250.00', '2026-10-01'
+        );
+
+        $occurrence_id = $this->createForecastOccurrence(
+            $space, $expense, 'expense',
+            '100.00', '2026-10-15'
+        );
+
+        $service = new ReportService();
+
+        $before = $service->getMonthlyForecast(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame('250.00', $before['actual']['balance']);
+        $this->assertSame('100.00', $before['pending_expense']);
+        $this->assertSame('150.00', $before['projected_balance']);
+
+        (new \Osumi\OsumiFramework\App\Service\Recurring\OccurrenceService())
+            ->resolve($space, $user, $occurrence_id, 'confirm');
+
+        $after = $service->getMonthlyForecast(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame('100.00', $after['actual']['expense']);
+        $this->assertSame('150.00', $after['actual']['balance']);
+        $this->assertSame('0.00', $after['pending_expense']);
+        $this->assertSame(0, $after['pending_occurrence_count']);
+        $this->assertSame('150.00', $after['projected_balance']);
+        $this->assertSame(2, $after['actual']['transaction_count']);
+    }
+
+    /**
+     * Omitir una pendiente elimina su efecto en la
+     * previsión sin crear ningún movimiento.
+     */
+    public function testForecastAfterSkipping(): void {
+        [$space, $user, $expense] = $this->prepareSpace();
+
+        $occurrence_id = $this->createForecastOccurrence(
+            $space, $expense, 'expense',
+            '125.00', '2026-10-15'
+        );
+
+        $service = new ReportService();
+        $before = $service->getMonthlyForecast(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame('-125.00', $before['projected_balance']);
+
+        (new \Osumi\OsumiFramework\App\Service\Recurring\OccurrenceService())
+            ->resolve($space, $user, $occurrence_id, 'skip');
+
+        $after = $service->getMonthlyForecast(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame('0.00', $after['actual']['balance']);
+        $this->assertSame('0.00', $after['pending_balance']);
+        $this->assertSame('0.00', $after['projected_balance']);
+        $this->assertSame(0, $after['actual']['transaction_count']);
+        $this->assertSame(0, $after['pending_occurrence_count']);
+    }
+
+    /**
+     * Comprueba sumas decimales sin coma flotante.
+     */
+    public function testForecastDecimalPrecision(): void {
+        [$space, $user, $expense, $income] = $this->prepareSpace();
+
+        $this->transaction(
+            $space, $user, $income, 'income',
+            '0.10', '2026-10-01'
+        );
+        $this->transaction(
+            $space, $user, $expense, 'expense',
+            '0.40', '2026-10-02'
+        );
+
+        $this->createForecastOccurrence(
+            $space, $income, 'income',
+            '0.20', '2026-10-15'
+        );
+        $this->createForecastOccurrence(
+            $space, $expense, 'expense',
+            '0.01', '2026-10-16'
+        );
+
+        $result = (new ReportService())->getMonthlyForecast(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame('0.30', $result['projected_income']);
+        $this->assertSame('0.41', $result['projected_expense']);
+        $this->assertSame('-0.11', $result['projected_balance']);
+    }
+
+    /**
+     * Un mes sin movimientos ni ocurrencias devuelve ceros.
+     */
+    public function testForecastEmptyMonth(): void {
+        [$space, $user] = $this->prepareSpace();
+
+        $result = (new ReportService())->getMonthlyForecast(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame('0.00', $result['actual']['balance']);
+        $this->assertSame('0.00', $result['pending_income']);
+        $this->assertSame('0.00', $result['pending_expense']);
+        $this->assertSame('0.00', $result['pending_balance']);
+        $this->assertSame('0.00', $result['projected_balance']);
+        $this->assertSame(0, $result['pending_occurrence_count']);
+    }
+
+    /**
+     * El informe solo considera las fechas del mes solicitado.
+     */
+    public function testForecastFiltersByScheduledMonth(): void {
+        [$space, $user, $expense, $income] = $this->prepareSpace();
+
+        $this->transaction(
+            $space, $user, $income, 'income',
+            '200.00', '2026-11-01'
+        );
+
+        $this->createForecastOccurrence(
+            $space, $expense, 'expense',
+            '100.00', '2026-11-15'
+        );
+
+        $october = (new ReportService())->getMonthlyForecast(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame('0.00', $october['projected_balance']);
+        $this->assertSame(0, $october['pending_occurrence_count']);
+
+        $november = (new ReportService())->getMonthlyForecast(
+            $space, $user, '2026-11'
+        );
+
+        $this->assertSame('100.00', $november['projected_balance']);
+        $this->assertSame(1, $november['pending_occurrence_count']);
+    }
+
+    /**
+     * Una plantilla desactivada mantiene sus pendientes
+     * previamente creadas dentro de la previsión.
+     */
+    public function testForecastIncludesPendingFromInactiveTemplate(): void {
+        [$space, $user, $expense] = $this->prepareSpace();
+
+        $occurrence_id = $this->createForecastOccurrence(
+            $space, $expense, 'expense',
+            '80.00', '2026-10-15'
+        );
+
+        $stmt = $this->db->prepare(
+            'UPDATE `recurring_transaction`
+             SET active = 0
+             WHERE id = (
+                SELECT id_recurring_transaction
+                FROM `recurring_occurrence`
+                WHERE id = ?
+             )'
+        );
+        $stmt->execute([$occurrence_id]);
+
+        $result = (new ReportService())->getMonthlyForecast(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame('80.00', $result['pending_expense']);
+        $this->assertSame('-80.00', $result['projected_balance']);
+    }
+
+    /**
+     * No se contabilizan importes de otros espacios.
+     */
+    public function testForecastSpaceIsolation(): void {
+        [$space, $user] = $this->prepareSpace();
+        [$other_space, $other_user, $other_expense, $other_income] =
+            $this->prepareSpace();
+
+        $this->transaction(
+            $other_space, $other_user, $other_income,
+            'income', '999.00', '2026-10-01'
+        );
+
+        $this->createForecastOccurrence(
+            $other_space, $other_expense, 'expense',
+            '500.00', '2026-10-15'
+        );
+
+        $result = (new ReportService())->getMonthlyForecast(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame('0.00', $result['actual']['balance']);
+        $this->assertSame('0.00', $result['pending_balance']);
+        $this->assertSame('0.00', $result['projected_balance']);
+    }
+
+    /**
+     * Un usuario ajeno no puede consultar previsiones.
+     */
+    public function testOutsiderCannotReadForecast(): void {
+        [$space] = $this->prepareSpace();
+        $outsider = $this->createUser();
+
+        $this->expectException(DomainException::class);
+
+        (new ReportService())->getMonthlyForecast(
+            $space, $outsider, '2026-10'
+        );
+    }
+
+    /**
+     * Un miembro dado de baja no puede consultar previsiones.
+     */
+    public function testInactiveMemberCannotReadForecast(): void {
+        [$space] = $this->prepareSpace();
+        $member = $this->createUser();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `space_member`
+             (id_space, id_user, left_at)
+             VALUES (?, ?, NOW())'
+        );
+        $stmt->execute([$space, $member]);
+
+        $this->expectException(DomainException::class);
+
+        (new ReportService())->getMonthlyForecast(
+            $space, $member, '2026-10'
+        );
+    }
+
+    /**
+     * Comprueba que la validación del mes se reutiliza.
+     */
+    public function testForecastInvalidMonth(): void {
+        [$space, $user] = $this->prepareSpace();
+
+        $this->expectException(InvalidArgumentException::class);
+
+        (new ReportService())->getMonthlyForecast(
+            $space, $user, '2026-13'
+        );
+    }
+
+    /**
+     * Consultar una previsión no genera mensualidades
+     * automáticamente a partir de plantillas.
+     */
+    public function testForecastDoesNotGenerateOccurrences(): void {
+        [$space, $user, $expense] = $this->prepareSpace();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `recurring_transaction`
+             (id_space, id_category, type, amount,
+              concept, day_of_month, start_date, active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->execute([
+            $space, $expense, 'expense', '300.00',
+            'Suscripción', 15, '2026-10-01', 1
+        ]);
+
+        $result = (new ReportService())->getMonthlyForecast(
+            $space, $user, '2026-10'
+        );
+
+        $this->assertSame(0, $result['pending_occurrence_count']);
+        $this->assertSame('0.00', $result['projected_expense']);
+
+        $stmt = $this->db->prepare(
+            'SELECT COUNT(*) FROM `recurring_occurrence`
+             WHERE id_space = ?'
+        );
+        $stmt->execute([$space]);
+
+        $this->assertSame(0, (int) $stmt->fetchColumn());
+    }
+
+    /**
+     * Crea una plantilla y una ocurrencia pendiente de prueba.
+     *
+     * Utiliza SQL sobre la conexión de integración para
+     * preparar fechas fijas, sin depender del mes actual
+     * ni de las reglas de generación retrospectiva.
+     *
+     * @param int $space_id Espacio contable.
+     * @param int $category_id Categoría.
+     * @param string $type Tipo económico.
+     * @param string $amount Importe decimal.
+     * @param string $scheduled_date Fecha programada.
+     * @return int Identificador de la ocurrencia.
+     */
+    private function createForecastOccurrence(
+        int $space_id,
+        int $category_id,
+        string $type,
+        string $amount,
+        string $scheduled_date
+    ): int {
+        $period = substr($scheduled_date, 0, 7) . '-01';
+        $day = (int) substr($scheduled_date, 8, 2);
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `recurring_transaction`
+             (id_space, id_category, type, amount, concept,
+              day_of_month, start_date, active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+
+        $stmt->execute([
+            $space_id,
+            $category_id,
+            $type,
+            $amount,
+            'Previsión de prueba',
+            $day,
+            $period,
+            1
+        ]);
+
+        $recurring_id = (int) $this->db->lastInsertId();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `recurring_occurrence`
+             (id_space, id_recurring_transaction,
+              period, scheduled_date, status,
+              id_category, type, concept, amount)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+
+        $stmt->execute([
+            $space_id,
+            $recurring_id,
+            $period,
+            $scheduled_date,
+            'pending',
+            $category_id,
+            $type,
+            'Previsión de prueba',
+            $amount
+        ]);
+
+        return (int) $this->db->lastInsertId();
+    }
+
+    /**
      * Crea un espacio y dos categorías.
      *
      * @return array{int,int,int,int}

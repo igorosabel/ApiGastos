@@ -382,4 +382,158 @@ class ReportService extends OService {
             'months' => $months
         ];
     }
+
+    /**
+     * Obtiene el resultado real, pendiente y proyectado
+     * de un mes para un espacio contable.
+     *
+     * Solo se incluyen ocurrencias ya generadas con
+     * status pending. Las confirmadas están representadas
+     * exclusivamente por su movimiento económico real.
+     *
+     * @param int $space_id Espacio contable.
+     * @param int $user_id Usuario autenticado.
+     * @param string $month Mes YYYY-MM.
+     * @return array{
+     *     space_id: int,
+     *     month: string,
+     *     actual: array<string, int|string>,
+     *     pending_income: string,
+     *     pending_expense: string,
+     *     pending_balance: string,
+     *     pending_income_count: int,
+     *     pending_expense_count: int,
+     *     pending_occurrence_count: int,
+     *     projected_income: string,
+     *     projected_expense: string,
+     *     projected_balance: string
+     * }
+     */
+    public function getMonthlyForecast(
+        int $space_id,
+        int $user_id,
+        string $month
+    ): array {
+        // Valida el mes, comprueba la membresía activa
+        // y obtiene el resultado económico real.
+        $actual = $this->getMonthly(
+            $space_id,
+            $user_id,
+            $month
+        );
+
+        $start = DateTimeImmutable::createFromFormat(
+            '!Y-m-d',
+            $month . '-01'
+        );
+
+        $date_from = $start->format('Y-m-d');
+        $date_to = $start->modify('+1 month')->format('Y-m-d');
+
+        $db = ODB::getInstance();
+
+        // La subconsulta agrega exclusivamente pendientes.
+        // La consulta exterior suma los importes reales
+        // mediante operaciones DECIMAL de MariaDB.
+        $stmt = $db->prepare(
+            'SELECT
+                p.pending_income,
+                p.pending_expense,
+                p.pending_balance,
+                p.pending_income_count,
+                p.pending_expense_count,
+                p.pending_occurrence_count,
+                CAST(:actual_income AS DECIMAL(30,2))
+                    + p.pending_income AS projected_income,
+                CAST(:actual_expense AS DECIMAL(30,2))
+                    + p.pending_expense AS projected_expense,
+                CAST(:actual_balance AS DECIMAL(30,2))
+                    + p.pending_balance AS projected_balance
+             FROM (
+                SELECT
+                    COALESCE(
+                        SUM(
+                            CASE WHEN `type` = \'income\'
+                            THEN amount ELSE 0 END
+                        ),
+                        0
+                    ) AS pending_income,
+                    COALESCE(
+                        SUM(
+                            CASE WHEN `type` = \'expense\'
+                            THEN amount ELSE 0 END
+                        ),
+                        0
+                    ) AS pending_expense,
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN `type` = \'income\' THEN amount
+                                WHEN `type` = \'expense\' THEN -amount
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS pending_balance,
+                    COUNT(
+                        CASE WHEN `type` = \'income\'
+                        THEN 1 END
+                    ) AS pending_income_count,
+                    COUNT(
+                        CASE WHEN `type` = \'expense\'
+                        THEN 1 END
+                    ) AS pending_expense_count,
+                    COUNT(*) AS pending_occurrence_count
+                FROM `recurring_occurrence`
+                WHERE id_space = :space_id
+                  AND status = \'pending\'
+                  AND scheduled_date >= :date_from
+                  AND scheduled_date < :date_to
+             ) p'
+        );
+
+        $stmt->execute([
+            'actual_income' => $actual['income'],
+            'actual_expense' => $actual['expense'],
+            'actual_balance' => $actual['balance'],
+            'space_id' => $space_id,
+            'date_from' => $date_from,
+            'date_to' => $date_to
+        ]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!is_array($row)) {
+            throw new \RuntimeException(
+                'No se ha podido calcular la previsión.'
+            );
+        }
+
+        return [
+            'space_id' => $space_id,
+            'month' => $month,
+            'actual' => $actual,
+            'pending_income' => $this->formatAmount(
+                $row['pending_income']
+            ),
+            'pending_expense' => $this->formatAmount(
+                $row['pending_expense']
+            ),
+            'pending_balance' => $this->formatAmount(
+                $row['pending_balance']
+            ),
+            'pending_income_count' => (int) $row['pending_income_count'],
+            'pending_expense_count' => (int) $row['pending_expense_count'],
+            'pending_occurrence_count' => (int) $row['pending_occurrence_count'],
+            'projected_income' => $this->formatAmount(
+                $row['projected_income']
+            ),
+            'projected_expense' => $this->formatAmount(
+                $row['projected_expense']
+            ),
+            'projected_balance' => $this->formatAmount(
+                $row['projected_balance']
+            )
+        ];
+    }
 }
