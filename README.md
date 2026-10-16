@@ -10,7 +10,7 @@ La aplicación está diseñada alrededor del concepto de **espacios**, que permi
 
 Cada usuario dispone de un espacio personal y puede crear o participar en espacios compartidos, como una familia, una comunidad de vecinos o una asociación.
 
-`El backend comprende los siguientes ámbitos funcionales:`
+El backend comprende los siguientes ámbitos funcionales:
 
 - **Usuarios:** registro, autenticación JWT y consulta del usuario actual. La gestión avanzada del perfil y la cuenta queda pendiente.
 - **Espacios:** creación y administración de espacios privados y compartidos, con invitaciones y gestión de miembros.
@@ -92,11 +92,18 @@ Este archivo contiene configuración privada y no debe incluirse en el control d
 
 Crear la base de datos MariaDB e importar el esquema SQL correspondiente a la versión de la aplicación.
 
-Una vez configurada la conexión, los modelos ORM pueden generarse mediante:
+Los modelos ORM necesarios están incluidos en el
+repositorio y no necesitan regenerarse durante
+una instalación ordinaria.
 
-```bash
-php of generateModelFromDB
-```
+El comando `php of generateModelFromDB` es una
+herramienta de desarrollo. No debe ejecutarse
+para actualizar una instalación sin revisar
+previamente las diferencias generadas.
+
+Para la instalación y el mantenimiento del
+servidor, consultar
+[la guía de despliegue](docs/deployment.md).
 
 Los modelos existentes en el repositorio pueden incluir ajustes propios de la aplicación, por lo que no deben sobrescribirse sin revisar previamente los cambios generados.
 
@@ -113,8 +120,21 @@ privada de la API.
 
 ## Estado del proyecto
 
-**En desarrollo. Todavía no se ha publicado una
-versión estable.**
+**Versión 1.0.0: primera versión estable del backend.**
+
+Esta versión cubre el alcance inicial de la API
+REST, incluyendo autenticación, espacios,
+categorías, movimientos, recurrentes e informes.
+
+El frontend Angular es un proyecto independiente
+y no forma parte de esta release.
+
+Las funcionalidades futuras se desarrollarán
+según las necesidades detectadas durante
+la integración y el uso de la aplicación.
+
+Consultar [CHANGELOG.md](CHANGELOG.md) para
+conocer el alcance de la versión publicada.
 
 El backend dispone actualmente de:
 

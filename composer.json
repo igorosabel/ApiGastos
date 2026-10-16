@@ -1,6 +1,7 @@
 {
   "name": "igorosabel/apigastos",
   "description": "API para la gestión de gastos e ingresos personales y compartidos.",
+  "version": "1.0.0",
   "type": "project",
   "license": "MIT",
   "authors": [
