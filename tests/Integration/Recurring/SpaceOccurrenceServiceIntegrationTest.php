@@ -283,6 +283,309 @@ final class SpaceOccurrenceServiceIntegrationTest extends OrmIntegrationTestCase
     }
 
     /**
+     * Una desactivación impide generar nuevas ocurrencias.
+     * Tras reactivar, un mes válido pendiente puede crearse.
+     */
+    public function testReactivationAllowsMissingOccurrence(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+
+        $recurring = $this->createRecurring(
+            $space_id,
+            $owner_id,
+            $category_id,
+            'Suscripción',
+            10,
+            $period
+        );
+
+        $recurring_service = new RecurringService();
+        $generation_service = new SpaceOccurrenceService();
+
+        $recurring_service->setActive(
+            $space_id, $owner_id, $recurring->id, false
+        );
+
+        $inactive = $generation_service->generate(
+            $space_id, $owner_id, $period
+        );
+
+        $this->assertSame([
+            'created' => 0,
+            'existing' => 0,
+            'skipped' => 0,
+            'total' => 0
+        ], $inactive);
+
+        $this->assertSame(0, $this->countOccurrences($space_id));
+
+        $recurring_service->setActive(
+            $space_id, $owner_id, $recurring->id, true
+        );
+
+        $reactivated = $generation_service->generate(
+            $space_id, $owner_id, $period
+        );
+
+        $this->assertSame([
+            'created' => 1,
+            'existing' => 0,
+            'skipped' => 0,
+            'total' => 1
+        ], $reactivated);
+
+        $repeated = $generation_service->generate(
+            $space_id, $owner_id, $period
+        );
+
+        $this->assertSame(0, $repeated['created']);
+        $this->assertSame(1, $repeated['existing']);
+        $this->assertSame(1, $this->countOccurrences($space_id));
+        $this->assertSame(0, $this->countTransactions($space_id));
+    }
+
+    /**
+     * Los cambios hechos durante una pausa afectan a
+     * mensualidades nuevas, pero no a las ya existentes.
+     */
+    public function testExistingSnapshotSurvivesPauseAndUpdate(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+        $next_period = (new DateTimeImmutable($period))
+            ->modify('+1 month')
+            ->format('Y-m-d');
+
+        $recurring = $this->createRecurring(
+            $space_id,
+            $owner_id,
+            $category_id,
+            'Cuota original',
+            10,
+            $period
+        );
+
+        $occurrence_service = new OccurrenceService();
+        $recurring_service = new RecurringService();
+        $generation_service = new SpaceOccurrenceService();
+
+        $first = $occurrence_service->generate(
+            $space_id, $owner_id, $recurring->id, $period
+        );
+
+        $recurring_service->setActive(
+            $space_id, $owner_id, $recurring->id, false
+        );
+
+        $recurring_service->update(
+            $space_id,
+            $owner_id,
+            $recurring->id,
+            $category_id,
+            'expense',
+            '80.00',
+            'Cuota actualizada',
+            20,
+            $next_period
+        );
+
+        // La instantánea existente puede recuperarse
+        // incluso con la plantilla desactivada.
+        $existing = $occurrence_service->generate(
+            $space_id, $owner_id, $recurring->id, $period
+        );
+
+        $this->assertFalse($existing['created']);
+        $this->assertSame(
+            $first['occurrence']->id,
+            $existing['occurrence']->id
+        );
+        $this->assertSame(
+            '50.00',
+            $existing['occurrence']->amount
+        );
+        $this->assertSame(
+            'Cuota original',
+            $existing['occurrence']->concept
+        );
+        $this->assertSame(
+            substr($period, 0, 8) . '10',
+            $existing['occurrence']->scheduled_date
+        );
+
+        // El lote no incluye plantillas inactivas.
+        $inactive = $generation_service->generate(
+            $space_id, $owner_id, $period
+        );
+        $this->assertSame(0, $inactive['total']);
+
+        $recurring_service->setActive(
+            $space_id, $owner_id, $recurring->id, true
+        );
+
+        // Aunque la nueva fecha de inicio excluya este mes,
+        // la ocurrencia histórica existente se conserva.
+        $repeated = $generation_service->generate(
+            $space_id, $owner_id, $period
+        );
+
+        $this->assertSame(0, $repeated['created']);
+        $this->assertSame(1, $repeated['existing']);
+
+        // El mes siguiente sí utiliza los valores editados.
+        $next = $generation_service->generate(
+            $space_id, $owner_id, $next_period
+        );
+
+        $this->assertSame(1, $next['created']);
+
+        $new_occurrence = $occurrence_service->generate(
+            $space_id, $owner_id, $recurring->id, $next_period
+        );
+
+        $this->assertFalse($new_occurrence['created']);
+        $this->assertSame(
+            '80.00',
+            $new_occurrence['occurrence']->amount
+        );
+        $this->assertSame(
+            'Cuota actualizada',
+            $new_occurrence['occurrence']->concept
+        );
+        $this->assertSame(
+            substr($next_period, 0, 8) . '20',
+            $new_occurrence['occurrence']->scheduled_date
+        );
+
+        $this->assertSame(2, $this->countOccurrences($space_id));
+        $this->assertSame(0, $this->countTransactions($space_id));
+    }
+
+    /**
+     * Desactivar y reactivar no reabre ocurrencias
+     * confirmadas ni omitidas.
+     */
+    public function testResolvedOccurrencesSurviveReactivation(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+
+        $confirmed_template = $this->createRecurring(
+            $space_id, $owner_id, $category_id,
+            'Confirmada', 10, $period
+        );
+
+        $skipped_template = $this->createRecurring(
+            $space_id, $owner_id, $category_id,
+            'Omitida', 15, $period
+        );
+
+        $occurrence_service = new OccurrenceService();
+        $recurring_service = new RecurringService();
+        $generation_service = new SpaceOccurrenceService();
+
+        $first = $generation_service->generate(
+            $space_id, $owner_id, $period
+        );
+
+        $this->assertSame(2, $first['created']);
+
+        $confirmed = $occurrence_service->generate(
+            $space_id, $owner_id,
+            $confirmed_template->id, $period
+        );
+
+        $skipped = $occurrence_service->generate(
+            $space_id, $owner_id,
+            $skipped_template->id, $period
+        );
+
+        $confirmed_id = $confirmed['occurrence']->id;
+        $skipped_id = $skipped['occurrence']->id;
+
+        $occurrence_service->resolve(
+            $space_id, $owner_id, $confirmed_id, 'confirm'
+        );
+
+        $occurrence_service->resolve(
+            $space_id, $owner_id, $skipped_id, 'skip'
+        );
+
+        foreach (
+            [$confirmed_template, $skipped_template] as $template
+        ) {
+            $recurring_service->setActive(
+                $space_id, $owner_id, $template->id, false
+            );
+        }
+
+        $inactive = $generation_service->generate(
+            $space_id, $owner_id, $period
+        );
+
+        $this->assertSame(0, $inactive['total']);
+        $this->assertSame(2, $this->countOccurrences($space_id));
+        $this->assertSame(1, $this->countTransactions($space_id));
+
+        foreach (
+            [$confirmed_template, $skipped_template] as $template
+        ) {
+            $recurring_service->setActive(
+                $space_id, $owner_id, $template->id, true
+            );
+        }
+
+        $reactivated = $generation_service->generate(
+            $space_id, $owner_id, $period
+        );
+
+        $this->assertSame([
+            'created' => 0,
+            'existing' => 2,
+            'skipped' => 0,
+            'total' => 2
+        ], $reactivated);
+
+        $confirmed_again = $occurrence_service->generate(
+            $space_id, $owner_id,
+            $confirmed_template->id, $period
+        );
+
+        $skipped_again = $occurrence_service->generate(
+            $space_id, $owner_id,
+            $skipped_template->id, $period
+        );
+
+        $this->assertFalse($confirmed_again['created']);
+        $this->assertFalse($skipped_again['created']);
+
+        $this->assertSame(
+            $confirmed_id,
+            $confirmed_again['occurrence']->id
+        );
+        $this->assertSame(
+            $skipped_id,
+            $skipped_again['occurrence']->id
+        );
+
+        $this->assertSame(
+            'confirmed',
+            $confirmed_again['occurrence']->status
+        );
+        $this->assertSame(
+            'skipped',
+            $skipped_again['occurrence']->status
+        );
+
+        $this->assertSame(2, $this->countOccurrences($space_id));
+        $this->assertSame(1, $this->countTransactions($space_id));
+    }
+
+    /**
      * Crea el espacio y su categoría de gasto.
      *
      * @return array{int, int, int}
