@@ -1508,6 +1508,122 @@ final class ReportServiceIntegrationTest extends OrmIntegrationTestCase {
     }
 
     /**
+     * Dos movimientos en días consecutivos a ambos lados
+     * del cambio de mes deben contabilizarse en sus meses,
+     * aunque cambien las zonas horarias de PHP y MariaDB.
+     */
+    public function testMonthlyBoundaryIgnoresSessionTimezones(): void {
+        [$space, $user, $expense, $income] =
+            $this->prepareSpace();
+
+        $year = (int) $this->db->query(
+            'SELECT YEAR(CURRENT_DATE()) + 1'
+        )->fetchColumn();
+
+        while (!checkdate(2, 29, $year)) {
+            $year++;
+        }
+
+        $february_date = sprintf('%04d-02-29', $year);
+        $march_date = sprintf('%04d-03-01', $year);
+
+        $february_month = sprintf('%04d-02', $year);
+        $march_month = sprintf('%04d-03', $year);
+
+        $original_php_timezone = date_default_timezone_get();
+
+        $original_db_timezone = (string) $this->db->query(
+            'SELECT @@session.time_zone'
+        )->fetchColumn();
+
+        try {
+            // Registrar el último día de febrero con
+            // una combinación concreta de zonas.
+            date_default_timezone_set(
+                'America/Los_Angeles'
+            );
+
+            $this->db->exec(
+                "SET SESSION time_zone = '-09:00'"
+            );
+
+            $this->transaction(
+                $space, $user, $expense,
+                'expense', '31.10', $february_date
+            );
+
+            // Registrar el primer día de marzo con
+            // otras zonas horarias.
+            date_default_timezone_set('Europe/Madrid');
+
+            $this->db->exec(
+                "SET SESSION time_zone = '+09:00'"
+            );
+
+            $this->transaction(
+                $space, $user, $income,
+                'income', '75.25', $march_date
+            );
+
+            $service = new ReportService();
+
+            $february = $service->getMonthly(
+                $space, $user, $february_month
+            );
+
+            $march = $service->getMonthly(
+                $space, $user, $march_month
+            );
+
+            $this->assertSame(
+                '0.00',
+                $february['income']
+            );
+            $this->assertSame(
+                '31.10',
+                $february['expense']
+            );
+            $this->assertSame(
+                '-31.10',
+                $february['balance']
+            );
+            $this->assertSame(
+                1,
+                $february['transaction_count']
+            );
+
+            $this->assertSame(
+                '75.25',
+                $march['income']
+            );
+            $this->assertSame(
+                '0.00',
+                $march['expense']
+            );
+            $this->assertSame(
+                '75.25',
+                $march['balance']
+            );
+            $this->assertSame(
+                1,
+                $march['transaction_count']
+            );
+        }
+        finally {
+            date_default_timezone_set(
+                $original_php_timezone
+            );
+
+            $this->db->exec(
+                'SET SESSION time_zone = ' .
+                $this->db->quote($original_db_timezone)
+            );
+        }
+
+        $this->assertFalse($this->db->inTransaction());
+    }
+
+    /**
      * Crea una plantilla y una ocurrencia pendiente de prueba.
      *
      * Utiliza SQL sobre la conexión de integración para

@@ -197,3 +197,81 @@ de periodos de activación y desactivación.
 
 Cualquier cambio posterior de esta regla deberá
 tratarse como una decisión de producto.
+
+## Fechas y zonas horarias
+
+### Fechas de calendario
+
+Los campos siguientes no incluyen hora ni zona horaria:
+
+- `start_date`
+- `end_date`
+- `period`
+- `scheduled_date`
+- `financial_transaction.date`
+
+Son fechas de calendario representadas mediante el
+tipo `DATE` de MariaDB.
+
+El periodo recurrente es siempre el primer día
+del mes (`YYYY-MM-01`).
+
+El día programado se calcula a partir del calendario
+del mes solicitado.
+
+Cuando el día nominal supera la duración del mes,
+se utiliza su último día.
+
+El cambio al horario de verano o invierno no debe
+desplazar una mensualidad al día anterior o siguiente.
+
+### Mes de creación
+
+`recurring_transaction.created_at` utiliza `DATETIME`.
+
+La generación no permite crear una mensualidad
+anterior al mes que figura en ese campo.
+
+`DATETIME` no almacena información de zona horaria.
+Su valor se genera inicialmente mediante MariaDB.
+
+Una vez almacenado, cambiar la zona horaria de
+la sesión no debe reinterpretar retroactivamente
+el mes de creación de la plantilla.
+
+### Configuración de las instalaciones
+
+La zona horaria de PHP y la zona de sesión de
+MariaDB pueden configurarse independientemente.
+
+Cuando ambas son distintas, el instante exacto
+del cambio de mes puede corresponder a fechas
+locales diferentes.
+
+El contrato actual no define una zona horaria
+por usuario o por espacio contable.
+
+Las pruebas de integración garantizan la
+estabilidad de las fechas de calendario, pero
+no sustituyen una futura decisión sobre la zona
+horaria de referencia para registrar instantes
+de creación.
+
+No introducir conversiones horarias automáticas
+en las fechas contables sin revisar esta política.
+
+### Pruebas
+
+La cobertura incluye:
+
+- Febrero de un año bisiesto.
+- Meses de distinta duración.
+- Cambios de zona horaria de PHP.
+- Cambios de zona horaria de sesión MariaDB.
+- Corte entre el último día de un mes y el primero
+  del siguiente.
+- Restricción de creación basada en `created_at`.
+
+Las modificaciones temporales de las zonas horarias
+se realizan exclusivamente en los tests y se
+restauran mediante `finally`.

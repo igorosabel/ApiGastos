@@ -1838,6 +1838,259 @@ final class OccurrenceServiceIntegrationTest extends OrmIntegrationTestCase {
     }
 
     /**
+     * La fecha programada depende del calendario mensual,
+     * no de la zona horaria activa en PHP.
+     *
+     * Cubre febrero bisiesto y meses con cambios de hora.
+     */
+    public function testMonthlyCalendarIsIndependentOfPhpTimezone(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 31
+        );
+
+        // Buscar un año bisiesto futuro para que
+        // febrero tenga exactamente 29 días.
+        $year = (int) $this->db->query(
+            'SELECT YEAR(CURRENT_DATE()) + 1'
+        )->fetchColumn();
+
+        while (!checkdate(2, 29, $year)) {
+            $year++;
+        }
+
+        $cases = [
+            sprintf('%04d-02-01', $year) =>
+                sprintf('%04d-02-29', $year),
+            sprintf('%04d-03-01', $year) =>
+                sprintf('%04d-03-31', $year),
+            sprintf('%04d-10-01', $year) =>
+                sprintf('%04d-10-31', $year),
+            sprintf('%04d-11-01', $year) =>
+                sprintf('%04d-11-30', $year)
+        ];
+
+        $timezones = [
+            'UTC',
+            'Europe/Madrid',
+            'America/Los_Angeles'
+        ];
+
+        $previous_timezone = date_default_timezone_get();
+        $service = new OccurrenceService();
+
+        try {
+            foreach ($cases as $period => $expected_date) {
+                $original_id = null;
+
+                foreach ($timezones as $timezone) {
+                    date_default_timezone_set($timezone);
+
+                    $result = $service->generate(
+                        $space_id,
+                        $owner_id,
+                        $recurring->id,
+                        $period
+                    );
+
+                    $occurrence = $result['occurrence'];
+
+                    $this->assertSame(
+                        $period,
+                        $occurrence->period
+                    );
+
+                    $this->assertSame(
+                        $expected_date,
+                        $occurrence->scheduled_date
+                    );
+
+                    if ($original_id === null) {
+                        $this->assertTrue($result['created']);
+                        $original_id = $occurrence->id;
+                    }
+                    else {
+                        $this->assertFalse($result['created']);
+                        $this->assertSame(
+                            $original_id,
+                            $occurrence->id
+                        );
+                    }
+                }
+            }
+        }
+        finally {
+            date_default_timezone_set(
+                $previous_timezone
+            );
+        }
+
+        $this->assertSame(
+            4,
+            $this->countOccurrences($recurring->id)
+        );
+
+        $this->assertSame(
+            0,
+            $this->countSpaceTransactions($space_id)
+        );
+
+        $this->assertFalse($this->db->inTransaction());
+    }
+
+    /**
+     * El primer mes generable procede del created_at
+     * almacenado, sin reinterpretarlo al cambiar la zona
+     * horaria de la sesión MariaDB.
+     */
+    public function testCreationMonthBoundaryUsesStoredDatetime(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $year = (int) $this->db->query(
+            'SELECT YEAR(CURRENT_DATE()) + 1'
+        )->fetchColumn();
+
+        while (!checkdate(2, 29, $year)) {
+            $year++;
+        }
+
+        $period = sprintf('%04d-02-01', $year);
+        $end_of_february = sprintf(
+            '%04d-02-29 23:59:59',
+            $year
+        );
+        $start_of_march = sprintf(
+            '%04d-03-01 00:00:00',
+            $year
+        );
+
+        $eligible = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+
+        $not_eligible = $this->recurring(
+            $space_id, $owner_id, $category_id, 15
+        );
+
+        // Preparar artificialmente la frontera mensual.
+        // No modificamos el reloj del servidor.
+        $stmt = $this->db->prepare(
+            'UPDATE `recurring_transaction`
+             SET created_at = ?
+             WHERE id = ?
+               AND id_space = ?'
+        );
+
+        $stmt->execute([
+            $end_of_february,
+            $eligible->id,
+            $space_id
+        ]);
+
+        $stmt->execute([
+            $start_of_march,
+            $not_eligible->id,
+            $space_id
+        ]);
+
+        $original_timezone = (string) $this->db->query(
+            'SELECT @@session.time_zone'
+        )->fetchColumn();
+
+        $service = new OccurrenceService();
+        $original_occurrence_id = null;
+
+        try {
+            foreach (['+09:00', '-09:00'] as $timezone) {
+                $this->db->exec(
+                    'SET SESSION time_zone = ' .
+                    $this->db->quote($timezone)
+                );
+
+                // Creada el 29 de febrero: febrero válido.
+                $generated = $service->generate(
+                    $space_id,
+                    $owner_id,
+                    $eligible->id,
+                    $period
+                );
+
+                $this->assertSame(
+                    $original_occurrence_id === null,
+                    $generated['created']
+                );
+
+                $this->assertSame(
+                    sprintf('%04d-02-10', $year),
+                    $generated['occurrence']->scheduled_date
+                );
+
+                if ($original_occurrence_id === null) {
+                    $original_occurrence_id =
+                        $generated['occurrence']->id;
+                }
+                else {
+                    $this->assertSame(
+                        $original_occurrence_id,
+                        $generated['occurrence']->id
+                    );
+                }
+
+                // Creada el 1 de marzo: febrero prohibido.
+                try {
+                    $service->generate(
+                        $space_id,
+                        $owner_id,
+                        $not_eligible->id,
+                        $period
+                    );
+
+                    $this->fail(
+                        'Se ha generado febrero para una plantilla creada en marzo.'
+                    );
+                }
+                catch (
+                    \Osumi\OsumiFramework\App\Service\Recurring\OccurrenceNotEligibleException $e
+                ) {
+                    $this->assertSame(
+                        'El periodo es anterior al inicio permitido.',
+                        $e->getMessage()
+                    );
+                }
+
+                $this->assertFalse(
+                    $this->db->inTransaction()
+                );
+            }
+        }
+        finally {
+            // Restaurar siempre el valor original.
+            $this->db->exec(
+                'SET SESSION time_zone = ' .
+                $this->db->quote($original_timezone)
+            );
+        }
+
+        $this->assertSame(
+            1,
+            $this->countOccurrences($eligible->id)
+        );
+
+        $this->assertSame(
+            0,
+            $this->countOccurrences($not_eligible->id)
+        );
+
+        $this->assertSame(
+            0,
+            $this->countSpaceTransactions($space_id)
+        );
+    }
+
+    /**
      * Inicia una transacción y bloquea el espacio
      * utilizando la conexión principal de integración.
      *
