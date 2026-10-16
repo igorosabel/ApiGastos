@@ -5,6 +5,7 @@
 		"pass": "pass",
 		"name": "name"
 	},
+	"allow-cross-origin": true,
 	"cookies": {
 		"prefix": "",
 		"url": ""

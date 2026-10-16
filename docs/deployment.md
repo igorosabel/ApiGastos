@@ -358,3 +358,55 @@ credenciales o una base de datos de producción.
 
 No considerar el esquema inicial como una herramienta
 de actualización de instalaciones existentes.
+
+## Política CORS
+
+### Decisión para la versión 1.0
+
+ApiGastos mantiene la política CORS abierta
+proporcionada por Osumi Framework 9.12.1.
+
+La configuración de ejemplo declara:
+
+`"allow-cross-origin": true`
+
+Con esta configuración, OFW permite peticiones
+de navegador desde cualquier origen mediante
+`Access-Control-Allow-Origin: *`.
+
+La API utiliza autenticación JWT mediante
+`Authorization: Bearer`, no autenticación
+automática mediante cookies.
+
+CORS no sustituye la autenticación ni las
+comprobaciones de permisos por espacio.
+
+El navegador necesita disponer de un JWT válido
+para acceder a los endpoints protegidos.
+
+Esta decisión favorece las instalaciones
+autoalojadas en las que Angular y ApiGastos
+pueden estar publicados en dominios diferentes.
+
+### Limitaciones
+
+- No se mantiene una lista de orígenes permitidos.
+- No se habilita `Access-Control-Allow-Credentials`.
+- No se implementa un middleware CORS propio.
+- No se modifica Osumi Framework.
+
+Si en una versión futura se incorpora
+autenticación mediante cookies o se requiere
+restringir los orígenes permitidos, será
+necesario revisar esta política.
+
+### Comprobación
+
+Las peticiones OPTIONS a rutas existentes deben
+responder correctamente con las cabeceras CORS.
+
+Las peticiones a rutas protegidas siguen
+requiriendo autenticación válida.
+
+El comportamiento debe comprobarse también
+en el servidor web desplegado.
