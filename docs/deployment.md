@@ -150,6 +150,57 @@ En la configuración PHP de producción:
 No crear endpoints públicos para provocar
 excepciones deliberadamente en producción.
 
+### Errores durante la inicialización
+
+El controlador frontal `public/index.php` registra
+el manejador de excepciones de OFW antes de ejecutar
+`OCore::load()`.
+
+Esto permite tratar los fallos de inicialización
+con el manejador estándar de OFW 9.12.1.
+
+Cuando el framework todavía no está completamente
+inicializado:
+
+- La excepción se registra mediante el mecanismo
+  disponible, utilizando `error_log()` si es necesario.
+- La respuesta HTTP es 500.
+- No se expone la traza interna al cliente.
+- El cuerpo puede ser texto plano con el mensaje
+  genérico `Internal Server Error`.
+
+Este mecanismo no sustituye la configuración
+correcta de PHP ni puede garantizar la captura
+de errores anteriores a la carga del autoloader
+o de fallos fatales del propio proceso.
+
+### Contratos HTTP de error
+
+Los clientes deben distinguir:
+
+| HTTP | Significado |
+|---|---|
+| 400 | Datos de entrada incorrectos |
+| 401 | Autenticación ausente o inválida |
+| 403 | Usuario sin autorización |
+| 404 | Ruta inexistente |
+| 405 | Método HTTP no admitido |
+| 409 | Conflicto con el estado actual |
+| 500 | Error interno inesperado |
+
+Los errores controlados por componentes de Gastos
+utilizan sus correspondientes plantillas JSON.
+
+Las respuestas 404, 405 y 500 gestionadas
+directamente por OFW no tienen necesariamente
+el mismo formato JSON.
+
+Por tanto, el cliente debe comprobar primero
+el código HTTP y el tipo de contenido.
+
+Nunca interpretar indiscriminadamente todas
+las respuestas como JSON.
+
 ## Base de datos
 
 Crear una base MariaDB con el charset y la

@@ -93,6 +93,38 @@ final class LoginComponentTest extends TestCase {
     }
 
     /**
+     * Los errores internos del servicio no deben
+     * confundirse con credenciales incorrectas.
+     *
+     * El componente propaga la excepción para que
+     * OFW se encargue del error inesperado.
+     */
+    public function testUnexpectedServiceErrorIsPropagated(): void {
+        $service = $this->createMock(AuthService::class);
+
+        $service->expects($this->once())
+            ->method('login')
+            ->with(
+                'test@example.com',
+                'contraseña correcta'
+            )
+            ->willThrowException(
+                new RuntimeException(
+                    'Error interno de base de datos.'
+                )
+            );
+
+        $component = $this->createComponent($service);
+
+        $this->expectException(RuntimeException::class);
+
+        $component->run($this->createRequest([
+            'email' => 'test@example.com',
+            'password' => 'contraseña correcta'
+        ]));
+    }
+
+    /**
      * Construye el componente con un servicio simulado.
      *
      * @param AuthService $service Servicio de autenticación.
