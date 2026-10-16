@@ -88,6 +88,68 @@ No publicarlo ni incluirlo en logs o documentación.
 
 Cambiar el secreto invalida los JWT anteriores.
 
+### Validación previa de configuración
+
+Antes de activar la API en producción, ejecutar:
+
+```bash
+php bin/check-deployment.php
+```
+
+El comando utiliza la configuración efectiva de OFW,
+incluyendo los archivos de configuración por entorno.
+
+Comprueba:
+
+- Que los parámetros principales de MariaDB no
+  están vacíos ni conservan valores de ejemplo.
+- Que `base_url` utiliza HTTPS y no contiene
+  credenciales incrustadas.
+- Que `extra.jwt_secret` es una cadena de al menos
+  32 caracteres.
+- Que `log_level` está configurado como `ERROR`.
+
+Los problemas se comunican mediante nombres de
+campos, sin imprimir contraseñas ni secretos.
+
+El comando devuelve un código distinto de cero
+si la configuración no supera estas comprobaciones.
+
+Esta validación no comprueba la conectividad con
+MariaDB, los permisos de sus usuarios, los certificados
+TLS ni la calidad criptográfica del secreto.
+
+El secreto JWT debe generarse mediante un generador
+criptográficamente seguro, tal como se explica
+en el apartado anterior.
+
+### Errores HTTP en producción
+
+OFW 9.12.1 dispone de gestión de excepciones
+inesperadas mediante su manejador de errores.
+
+Los errores internos se registran en el servidor
+y provocan una respuesta HTTP 500.
+
+El manejador estándar puede devolver una página
+HTML genérica, no necesariamente el contrato JSON
+de los errores de validación de la API.
+
+Los clientes deben comprobar el código HTTP antes
+de interpretar el cuerpo como JSON.
+
+En la configuración PHP de producción:
+
+- `display_errors` debe estar desactivado.
+- `log_errors` debe estar activado.
+- Los archivos de log deben permanecer fuera
+  del directorio público.
+- Las trazas y los mensajes internos no deben
+  exponerse al usuario de la API.
+
+No crear endpoints públicos para provocar
+excepciones deliberadamente en producción.
+
 ## Base de datos
 
 Crear una base MariaDB con el charset y la
