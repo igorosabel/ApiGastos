@@ -517,6 +517,200 @@ final class ReportServiceIntegrationTest extends OrmIntegrationTestCase {
     }
 
     /**
+     * Comprueba una serie de meses consecutivos,
+     * incluyendo un mes sin movimientos.
+     */
+    public function testEvolutionIncludesEmptyMonths(): void {
+        [$space, $user, $expense, $income] = $this->prepareSpace();
+
+        $this->transaction(
+            $space, $user, $income, 'income',
+            '2500.00', '2026-08-10'
+        );
+        $this->transaction(
+            $space, $user, $expense, 'expense',
+            '200.00', '2026-10-15'
+        );
+
+        $result = (new ReportService())->getEvolution(
+            $space, $user, '2026-08', '2026-10'
+        );
+
+        $this->assertSame($space, $result['space_id']);
+        $this->assertSame('2026-08', $result['month_from']);
+        $this->assertSame('2026-10', $result['month_to']);
+        $this->assertCount(3, $result['months']);
+
+        $this->assertSame('2026-08', $result['months'][0]['month']);
+        $this->assertSame('2500.00', $result['months'][0]['income']);
+        $this->assertSame('2500.00', $result['months'][0]['balance']);
+
+        $this->assertSame('2026-09', $result['months'][1]['month']);
+        $this->assertSame('0.00', $result['months'][1]['income']);
+        $this->assertSame('0.00', $result['months'][1]['expense']);
+        $this->assertSame(0, $result['months'][1]['transaction_count']);
+
+        $this->assertSame('2026-10', $result['months'][2]['month']);
+        $this->assertSame('200.00', $result['months'][2]['expense']);
+        $this->assertSame('-200.00', $result['months'][2]['balance']);
+    }
+
+    /**
+     * Un rango de un único mes coincide con el informe mensual.
+     */
+    public function testEvolutionSingleMonthMatchesMonthlyReport(): void {
+        [$space, $user, $expense, $income] = $this->prepareSpace();
+        $service = new ReportService();
+
+        $this->transaction(
+            $space, $user, $income, 'income',
+            '125.20', '2026-10-01'
+        );
+        $this->transaction(
+            $space, $user, $expense, 'expense',
+            '30.10', '2026-10-31'
+        );
+
+        $expected = $service->getMonthly(
+            $space, $user, '2026-10'
+        );
+
+        $result = $service->getEvolution(
+            $space, $user, '2026-10', '2026-10'
+        );
+
+        $this->assertCount(1, $result['months']);
+        $this->assertSame($expected, $result['months'][0]);
+        $this->assertSame('95.10', $result['months'][0]['balance']);
+    }
+
+    /**
+     * Permite exactamente 24 mensualidades.
+     */
+    public function testEvolutionAllowsTwentyFourMonths(): void {
+        [$space, $user] = $this->prepareSpace();
+
+        $result = (new ReportService())->getEvolution(
+            $space, $user, '2025-01', '2026-12'
+        );
+
+        $this->assertCount(24, $result['months']);
+        $this->assertSame('2025-01', $result['months'][0]['month']);
+        $this->assertSame('2026-12', $result['months'][23]['month']);
+        $this->assertSame('0.00', $result['months'][23]['balance']);
+    }
+
+    /**
+     * Rechaza rangos y formatos inválidos.
+     */
+    public function testEvolutionRejectsInvalidRanges(): void {
+        [$space, $user] = $this->prepareSpace();
+        $service = new ReportService();
+
+        $cases = [
+            ['2026-00', '2026-10'],
+            ['2026-10', '2026-13'],
+            ['2026-1', '2026-10'],
+            ['2026-10-01', '2026-11'],
+            ['2026-12', '2026-11'],
+            ['2025-01', '2027-01'],
+            ['octubre', '2026-10']
+        ];
+
+        foreach ($cases as [$from, $to]) {
+            try {
+                $service->getEvolution(
+                    $space, $user, $from, $to
+                );
+                $this->fail(
+                    "Se ha aceptado el rango {$from} - {$to}."
+                );
+            }
+            catch (InvalidArgumentException) {
+                $this->assertFalse($this->db->inTransaction());
+            }
+        }
+    }
+
+    /**
+     * Evita mezclar movimientos entre espacios.
+     */
+    public function testEvolutionSpaceIsolation(): void {
+        [$space, $user] = $this->prepareSpace();
+        [$other_space, $other_user, , $other_income] =
+            $this->prepareSpace();
+
+        $this->transaction(
+            $other_space, $other_user, $other_income,
+            'income', '999.99', '2026-10-10'
+        );
+
+        $result = (new ReportService())->getEvolution(
+            $space, $user, '2026-09', '2026-10'
+        );
+
+        foreach ($result['months'] as $month) {
+            $this->assertSame('0.00', $month['income']);
+            $this->assertSame('0.00', $month['balance']);
+        }
+    }
+
+    /**
+     * Los usuarios ajenos no pueden consultar la evolución.
+     */
+    public function testOutsiderCannotReadEvolution(): void {
+        [$space] = $this->prepareSpace();
+        $outsider = $this->createUser();
+
+        $this->expectException(DomainException::class);
+
+        (new ReportService())->getEvolution(
+            $space, $outsider, '2026-09', '2026-10'
+        );
+    }
+
+    /**
+     * Una membresía inactiva no permite consultar la evolución.
+     */
+    public function testInactiveMemberCannotReadEvolution(): void {
+        [$space] = $this->prepareSpace();
+        $member = $this->createUser();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `space_member`
+             (id_space, id_user, left_at)
+             VALUES (?, ?, NOW())'
+        );
+        $stmt->execute([$space, $member]);
+
+        $this->expectException(DomainException::class);
+
+        (new ReportService())->getEvolution(
+            $space, $member, '2026-09', '2026-10'
+        );
+    }
+
+    /**
+     * Un miembro activo puede consultar la serie.
+     */
+    public function testActiveMemberCanReadEvolution(): void {
+        [$space] = $this->prepareSpace();
+        $member = $this->createUser();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `space_member` (id_space, id_user)
+             VALUES (?, ?)'
+        );
+        $stmt->execute([$space, $member]);
+
+        $result = (new ReportService())->getEvolution(
+            $space, $member, '2026-09', '2026-10'
+        );
+
+        $this->assertCount(2, $result['months']);
+    }
+
+    /**
      * Crea un espacio y dos categorías.
      *
      * @return array{int,int,int,int}

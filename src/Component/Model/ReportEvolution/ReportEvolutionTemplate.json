@@ -1,0 +1,6 @@
+{
+    "space_id": {{ space_id | number }},
+    "month_from": {{ month_from | plain }},
+    "month_to": {{ month_to | plain }},
+    "months": [{{ months }}]
+}

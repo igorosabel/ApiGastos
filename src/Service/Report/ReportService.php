@@ -283,4 +283,103 @@ class ReportService extends OService {
             'categories' => $categories
         ];
     }
+
+    /**
+     * Devuelve una serie mensual de resultados económicos reales.
+     *
+     * Ambos meses se incluyen y se permite un máximo de 24.
+     * Los meses sin movimientos figuran con importes cero.
+     *
+     * @param int $space_id Espacio contable.
+     * @param int $user_id Usuario autenticado.
+     * @param string $month_from Primer mes YYYY-MM.
+     * @param string $month_to Último mes YYYY-MM.
+     * @return array{
+     *     space_id: int,
+     *     month_from: string,
+     *     month_to: string,
+     *     months: list<array<string, int|string>>
+     * }
+     */
+    public function getEvolution(
+        int $space_id,
+        int $user_id,
+        string $month_from,
+        string $month_to
+    ): array {
+        if ($space_id <= 0 || $user_id <= 0) {
+            throw new InvalidArgumentException(
+                'Los identificadores no son válidos.'
+            );
+        }
+
+        $parse_month = static function(string $value): DateTimeImmutable {
+            if (
+                preg_match(
+                    '/^[0-9]{4}-(0[1-9]|1[0-2])$/D',
+                    $value
+                ) !== 1
+            ) {
+                throw new InvalidArgumentException(
+                    'El mes debe tener formato YYYY-MM.'
+                );
+            }
+
+            $parsed = DateTimeImmutable::createFromFormat(
+                '!Y-m-d',
+                $value . '-01'
+            );
+
+            if (
+                $parsed === false ||
+                $parsed->format('Y-m') !== $value
+            ) {
+                throw new InvalidArgumentException(
+                    'El mes no es válido.'
+                );
+            }
+
+            return $parsed;
+        };
+
+        $from = $parse_month($month_from);
+        $to = $parse_month($month_to);
+
+        if ($from > $to) {
+            throw new InvalidArgumentException(
+                'El mes inicial no puede superar el final.'
+            );
+        }
+
+        // Permite hasta 24 mensualidades, ambos extremos incluidos.
+        // Compara fechas sin convertirlas en marcas de tiempo.
+        if ($to >= $from->modify('+24 months')) {
+            throw new InvalidArgumentException(
+                'El intervalo no puede superar 24 meses.'
+            );
+        }
+
+        $months = [];
+
+        for (
+            $current = $from;
+            $current <= $to;
+            $current = $current->modify('+1 month')
+        ) {
+            // getMonthly() verifica permisos e importa
+            // directamente del libro real de movimientos.
+            $months[] = $this->getMonthly(
+                $space_id,
+                $user_id,
+                $current->format('Y-m')
+            );
+        }
+
+        return [
+            'space_id' => $space_id,
+            'month_from' => $month_from,
+            'month_to' => $month_to,
+            'months' => $months
+        ];
+    }
 }

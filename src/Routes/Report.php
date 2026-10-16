@@ -7,6 +7,7 @@ use Osumi\OsumiFramework\Core\OMiddleware;
 use Osumi\OsumiFramework\App\Middleware\LoginMiddleware;
 use Osumi\OsumiFramework\App\Module\Report\GetMonthlyReport\GetMonthlyReportComponent;
 use Osumi\OsumiFramework\App\Module\Report\GetMonthlyCategoryReport\GetMonthlyCategoryReportComponent;
+use Osumi\OsumiFramework\App\Module\Report\GetReportEvolution\GetReportEvolutionComponent;
 
 ORoute::prefix('/reports', function(): void {
     ORoute::get('/monthly', GetMonthlyReportComponent::class, [
@@ -24,4 +25,10 @@ ORoute::prefix('/reports', function(): void {
             ]
         ]
     );
+
+    ORoute::get('/evolution', GetReportEvolutionComponent::class, [
+        OMiddleware::PHASE_BEFORE => [
+            LoginMiddleware::class
+        ]
+    ]);
 });
