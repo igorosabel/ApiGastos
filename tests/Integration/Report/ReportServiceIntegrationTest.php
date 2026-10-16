@@ -1082,6 +1082,432 @@ final class ReportServiceIntegrationTest extends OrmIntegrationTestCase {
     }
 
     /**
+     * Devuelve todos los meses del rango, incluidos
+     * los vacíos, con resultados reales y previstos.
+     */
+    public function testForecastEvolutionIncludesEmptyMonths(): void {
+        [$space, $user, $expense, $income] =
+            $this->prepareSpace();
+
+        $this->transaction(
+            $space, $user, $income, 'income',
+            '1000.00', '2026-10-01'
+        );
+
+        $this->createForecastOccurrence(
+            $space, $expense, 'expense',
+            '125.50', '2026-10-15'
+        );
+
+        $this->createForecastOccurrence(
+            $space, $income, 'income',
+            '200.00', '2026-11-10'
+        );
+
+        $result = (new ReportService())->getForecastEvolution(
+            $space, $user, '2026-09', '2026-11'
+        );
+
+        $this->assertSame($space, $result['space_id']);
+        $this->assertSame('2026-09', $result['month_from']);
+        $this->assertSame('2026-11', $result['month_to']);
+        $this->assertCount(3, $result['months']);
+
+        $september = $result['months'][0];
+        $this->assertSame('2026-09', $september['month']);
+        $this->assertSame('0.00', $september['actual']['balance']);
+        $this->assertSame('0.00', $september['pending_balance']);
+        $this->assertSame('0.00', $september['projected_balance']);
+        $this->assertSame(0, $september['pending_occurrence_count']);
+
+        $october = $result['months'][1];
+        $this->assertSame('2026-10', $october['month']);
+        $this->assertSame('1000.00', $october['actual']['income']);
+        $this->assertSame('125.50', $october['pending_expense']);
+        $this->assertSame('874.50', $october['projected_balance']);
+        $this->assertSame(1, $october['pending_occurrence_count']);
+
+        $november = $result['months'][2];
+        $this->assertSame('2026-11', $november['month']);
+        $this->assertSame('0.00', $november['actual']['balance']);
+        $this->assertSame('200.00', $november['pending_income']);
+        $this->assertSame('200.00', $november['projected_balance']);
+    }
+
+    /**
+     * Cada punto de la serie conserva exactamente el
+     * contrato de la previsión mensual individual.
+     */
+    public function testForecastEvolutionMatchesMonthlyForecast(): void {
+        [$space, $user, $expense, $income] =
+            $this->prepareSpace();
+
+        $this->transaction(
+            $space, $user, $income, 'income',
+            '0.10', '2026-10-01'
+        );
+
+        $this->createForecastOccurrence(
+            $space, $income, 'income',
+            '0.20', '2026-10-15'
+        );
+
+        $this->createForecastOccurrence(
+            $space, $expense, 'expense',
+            '0.40', '2026-10-16'
+        );
+
+        $service = new ReportService();
+
+        $individual = $service->getMonthlyForecast(
+            $space, $user, '2026-10'
+        );
+
+        $evolution = $service->getForecastEvolution(
+            $space, $user, '2026-10', '2026-10'
+        );
+
+        $this->assertCount(1, $evolution['months']);
+        $this->assertSame(
+            $individual,
+            $evolution['months'][0]
+        );
+
+        $this->assertSame(
+            '0.30',
+            $evolution['months'][0]['projected_income']
+        );
+        $this->assertSame(
+            '0.40',
+            $evolution['months'][0]['projected_expense']
+        );
+        $this->assertSame(
+            '-0.10',
+            $evolution['months'][0]['projected_balance']
+        );
+    }
+
+    /**
+     * Comprueba que la serie atraviesa correctamente
+     * el cambio de año.
+     */
+    public function testForecastEvolutionCrossesYearBoundary(): void {
+        [$space, $user] = $this->prepareSpace();
+
+        $result = (new ReportService())->getForecastEvolution(
+            $space, $user, '2026-12', '2027-02'
+        );
+
+        $this->assertSame(
+            ['2026-12', '2027-01', '2027-02'],
+            array_column($result['months'], 'month')
+        );
+
+        foreach ($result['months'] as $month) {
+            $this->assertSame(
+                '0.00',
+                $month['projected_balance']
+            );
+        }
+    }
+
+    /**
+     * Una confirmación mueve la cantidad a los datos
+     * reales sin duplicar el resultado proyectado.
+     */
+    public function testForecastEvolutionAfterConfirmation(): void {
+        [$space, $user, $expense, $income] =
+            $this->prepareSpace();
+
+        $this->transaction(
+            $space, $user, $income, 'income',
+            '300.00', '2026-10-01'
+        );
+
+        $occurrence_id = $this->createForecastOccurrence(
+            $space, $expense, 'expense',
+            '100.00', '2026-10-15'
+        );
+
+        $service = new ReportService();
+
+        $before = $service->getForecastEvolution(
+            $space, $user, '2026-10', '2026-11'
+        );
+
+        $this->assertSame(
+            '200.00',
+            $before['months'][0]['projected_balance']
+        );
+
+        (new \Osumi\OsumiFramework\App\Service\Recurring\OccurrenceService())
+            ->resolve($space, $user, $occurrence_id, 'confirm');
+
+        $after = $service->getForecastEvolution(
+            $space, $user, '2026-10', '2026-11'
+        );
+
+        $this->assertSame(
+            '100.00',
+            $after['months'][0]['actual']['expense']
+        );
+        $this->assertSame(
+            '0.00',
+            $after['months'][0]['pending_expense']
+        );
+        $this->assertSame(
+            '200.00',
+            $after['months'][0]['projected_balance']
+        );
+        $this->assertSame(
+            2,
+            $after['months'][0]['actual']['transaction_count']
+        );
+        $this->assertSame(
+            0,
+            $after['months'][0]['pending_occurrence_count']
+        );
+
+        $this->assertSame(
+            '0.00',
+            $after['months'][1]['projected_balance']
+        );
+    }
+
+    /**
+     * Omitir una ocurrencia la elimina de la previsión
+     * sin generar un movimiento real.
+     */
+    public function testForecastEvolutionAfterSkipping(): void {
+        [$space, $user, $expense] = $this->prepareSpace();
+
+        $occurrence_id = $this->createForecastOccurrence(
+            $space, $expense, 'expense',
+            '75.00', '2026-11-15'
+        );
+
+        $service = new ReportService();
+
+        $before = $service->getForecastEvolution(
+            $space, $user, '2026-10', '2026-11'
+        );
+
+        $this->assertSame(
+            '-75.00',
+            $before['months'][1]['projected_balance']
+        );
+
+        (new \Osumi\OsumiFramework\App\Service\Recurring\OccurrenceService())
+            ->resolve($space, $user, $occurrence_id, 'skip');
+
+        $after = $service->getForecastEvolution(
+            $space, $user, '2026-10', '2026-11'
+        );
+
+        $this->assertSame(
+            '0.00',
+            $after['months'][1]['projected_balance']
+        );
+        $this->assertSame(
+            0,
+            $after['months'][1]['actual']['transaction_count']
+        );
+        $this->assertSame(
+            0,
+            $after['months'][1]['pending_occurrence_count']
+        );
+    }
+
+    /**
+     * Permite exactamente 24 meses, ambos incluidos.
+     */
+    public function testForecastEvolutionAllowsTwentyFourMonths(): void {
+        [$space, $user] = $this->prepareSpace();
+
+        $result = (new ReportService())->getForecastEvolution(
+            $space, $user, '2025-01', '2026-12'
+        );
+
+        $this->assertCount(24, $result['months']);
+        $this->assertSame(
+            '2025-01',
+            $result['months'][0]['month']
+        );
+        $this->assertSame(
+            '2026-12',
+            $result['months'][23]['month']
+        );
+        $this->assertFalse($this->db->inTransaction());
+    }
+
+    /**
+     * Rechaza fechas inválidas, rangos invertidos
+     * e intervalos superiores a 24 meses.
+     */
+    public function testForecastEvolutionRejectsInvalidRanges(): void {
+        [$space, $user] = $this->prepareSpace();
+        $service = new ReportService();
+
+        $cases = [
+            ['2026-00', '2026-10'],
+            ['2026-10', '2026-13'],
+            ['2026-1', '2026-10'],
+            ['2026-10-01', '2026-11'],
+            ['2026-12', '2026-11'],
+            ['2025-01', '2027-01'],
+            ['octubre', '2026-10']
+        ];
+
+        foreach ($cases as [$from, $to]) {
+            try {
+                $service->getForecastEvolution(
+                    $space, $user, $from, $to
+                );
+
+                $this->fail(
+                    "Se ha aceptado el rango {$from} - {$to}."
+                );
+            }
+            catch (InvalidArgumentException) {
+                $this->assertFalse(
+                    $this->db->inTransaction()
+                );
+            }
+        }
+    }
+
+    /**
+     * Rechaza identificadores inválidos.
+     */
+    public function testForecastEvolutionRejectsInvalidIds(): void {
+        $this->expectException(InvalidArgumentException::class);
+
+        (new ReportService())->getForecastEvolution(
+            0, 1, '2026-10', '2026-11'
+        );
+    }
+
+    /**
+     * No mezcla las previsiones de dos espacios.
+     */
+    public function testForecastEvolutionIsolatedBySpace(): void {
+        [$space, $user] = $this->prepareSpace();
+
+        [$other_space, $other_user, $expense, $income] =
+            $this->prepareSpace();
+
+        $this->transaction(
+            $other_space, $other_user, $income,
+            'income', '999.00', '2026-10-01'
+        );
+
+        $this->createForecastOccurrence(
+            $other_space, $expense, 'expense',
+            '125.00', '2026-11-15'
+        );
+
+        $result = (new ReportService())->getForecastEvolution(
+            $space, $user, '2026-10', '2026-11'
+        );
+
+        foreach ($result['months'] as $month) {
+            $this->assertSame(
+                '0.00',
+                $month['actual']['balance']
+            );
+            $this->assertSame(
+                '0.00',
+                $month['pending_balance']
+            );
+            $this->assertSame(
+                '0.00',
+                $month['projected_balance']
+            );
+        }
+    }
+
+    /**
+     * Un usuario ajeno no puede consultar previsiones.
+     */
+    public function testOutsiderCannotReadForecastEvolution(): void {
+        [$space] = $this->prepareSpace();
+        $outsider = $this->createUser();
+
+        $this->expectException(DomainException::class);
+
+        (new ReportService())->getForecastEvolution(
+            $space, $outsider, '2026-10', '2026-11'
+        );
+    }
+
+    /**
+     * Una membresía inactiva no concede acceso.
+     */
+    public function testInactiveMemberCannotReadForecastEvolution(): void {
+        [$space] = $this->prepareSpace();
+        $member = $this->createUser();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `space_member`
+             (id_space, id_user, left_at)
+             VALUES (?, ?, NOW())'
+        );
+        $stmt->execute([$space, $member]);
+
+        $this->expectException(DomainException::class);
+
+        (new ReportService())->getForecastEvolution(
+            $space, $member, '2026-10', '2026-11'
+        );
+    }
+
+    /**
+     * La consulta de evolución no genera ocurrencias
+     * a partir de las plantillas activas.
+     */
+    public function testForecastEvolutionDoesNotGenerateOccurrences(): void {
+        [$space, $user, $expense] = $this->prepareSpace();
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO `recurring_transaction`
+             (id_space, id_category, type, amount,
+              concept, day_of_month, start_date, active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+
+        $stmt->execute([
+            $space, $expense, 'expense', '300.00',
+            'Suscripción', 15, '2026-10-01', 1
+        ]);
+
+        $result = (new ReportService())->getForecastEvolution(
+            $space, $user, '2026-10', '2026-12'
+        );
+
+        $this->assertCount(3, $result['months']);
+
+        foreach ($result['months'] as $month) {
+            $this->assertSame(
+                '0.00',
+                $month['projected_expense']
+            );
+            $this->assertSame(
+                0,
+                $month['pending_occurrence_count']
+            );
+        }
+
+        $stmt = $this->db->prepare(
+            'SELECT COUNT(*)
+             FROM `recurring_occurrence`
+             WHERE id_space = ?'
+        );
+        $stmt->execute([$space]);
+
+        $this->assertSame(0, (int) $stmt->fetchColumn());
+    }
+
+    /**
      * Crea una plantilla y una ocurrencia pendiente de prueba.
      *
      * Utiliza SQL sobre la conexión de integración para

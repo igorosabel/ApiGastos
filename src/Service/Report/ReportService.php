@@ -313,51 +313,10 @@ class ReportService extends OService {
             );
         }
 
-        $parse_month = static function(string $value): DateTimeImmutable {
-            if (
-                preg_match(
-                    '/^[0-9]{4}-(0[1-9]|1[0-2])$/D',
-                    $value
-                ) !== 1
-            ) {
-                throw new InvalidArgumentException(
-                    'El mes debe tener formato YYYY-MM.'
-                );
-            }
-
-            $parsed = DateTimeImmutable::createFromFormat(
-                '!Y-m-d',
-                $value . '-01'
-            );
-
-            if (
-                $parsed === false ||
-                $parsed->format('Y-m') !== $value
-            ) {
-                throw new InvalidArgumentException(
-                    'El mes no es válido.'
-                );
-            }
-
-            return $parsed;
-        };
-
-        $from = $parse_month($month_from);
-        $to = $parse_month($month_to);
-
-        if ($from > $to) {
-            throw new InvalidArgumentException(
-                'El mes inicial no puede superar el final.'
-            );
-        }
-
-        // Permite hasta 24 mensualidades, ambos extremos incluidos.
-        // Compara fechas sin convertirlas en marcas de tiempo.
-        if ($to >= $from->modify('+24 months')) {
-            throw new InvalidArgumentException(
-                'El intervalo no puede superar 24 meses.'
-            );
-        }
+        [$from, $to] = $this->validateEvolutionRange(
+            $month_from,
+            $month_to
+        );
 
         $months = [];
 
@@ -535,5 +494,124 @@ class ReportService extends OService {
                 $row['projected_balance']
             )
         ];
+    }
+
+    /**
+     * Obtiene la evolución de resultados reales,
+     * pendientes y proyectados de un espacio.
+     *
+     * No genera ocurrencias ni movimientos. Cada mes
+     * conserva el contrato de getMonthlyForecast().
+     *
+     * @param int $space_id Espacio contable.
+     * @param int $user_id Usuario autenticado.
+     * @param string $month_from Primer mes incluido.
+     * @param string $month_to Último mes incluido.
+     * @return array{
+     *     space_id: int,
+     *     month_from: string,
+     *     month_to: string,
+     *     months: list<array<string, mixed>>
+     * }
+     */
+    public function getForecastEvolution(
+        int $space_id,
+        int $user_id,
+        string $month_from,
+        string $month_to
+    ): array {
+        if ($space_id <= 0 || $user_id <= 0) {
+            throw new InvalidArgumentException(
+                'Los identificadores no son válidos.'
+            );
+        }
+
+        [$from, $to] = $this->validateEvolutionRange(
+            $month_from,
+            $month_to
+        );
+
+        $months = [];
+
+        for (
+            $current = $from;
+            $current <= $to;
+            $current = $current->modify('+1 month')
+        ) {
+            $months[] = $this->getMonthlyForecast(
+                $space_id,
+                $user_id,
+                $current->format('Y-m')
+            );
+        }
+
+        return [
+            'space_id' => $space_id,
+            'month_from' => $month_from,
+            'month_to' => $month_to,
+            'months' => $months
+        ];
+    }
+
+    /**
+     * Valida los límites de una serie mensual.
+     *
+     * Permite un máximo de 24 meses, ambos incluidos.
+     *
+     * @param string $month_from Primer mes YYYY-MM.
+     * @param string $month_to Último mes YYYY-MM.
+     * @return array{DateTimeImmutable, DateTimeImmutable}
+     */
+    private function validateEvolutionRange(
+        string $month_from,
+        string $month_to
+    ): array {
+        $parse_month = static function(
+            string $value
+        ): DateTimeImmutable {
+            if (
+                preg_match(
+                    '/^[0-9]{4}-(0[1-9]|1[0-2])$/D',
+                    $value
+                ) !== 1
+            ) {
+                throw new InvalidArgumentException(
+                    'El mes debe tener formato YYYY-MM.'
+                );
+            }
+
+            $parsed = DateTimeImmutable::createFromFormat(
+                '!Y-m-d',
+                $value . '-01'
+            );
+
+            if (
+                $parsed === false ||
+                $parsed->format('Y-m') !== $value
+            ) {
+                throw new InvalidArgumentException(
+                    'El mes no es válido.'
+                );
+            }
+
+            return $parsed;
+        };
+
+        $from = $parse_month($month_from);
+        $to = $parse_month($month_to);
+
+        if ($from > $to) {
+            throw new InvalidArgumentException(
+                'El mes inicial no puede superar el final.'
+            );
+        }
+
+        if ($to >= $from->modify('+24 months')) {
+            throw new InvalidArgumentException(
+                'El intervalo no puede superar 24 meses.'
+            );
+        }
+
+        return [$from, $to];
     }
 }
