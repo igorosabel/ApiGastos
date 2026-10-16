@@ -115,21 +115,31 @@ ni contribuye a las previsiones.
 
 Consultar informes no crea ocurrencias.
 
-## Decisión pendiente
+## Política de reactivación acordada
 
-Antes de implementar automatismos o una
-política estricta de pausas, decidir si:
+**Decisión definitiva para la primera versión: opción A.**
 
-1. Reactivar permite recuperar cualquier
-   mensualidad válida que falte, como ahora.
-2. Los meses en pausa deben quedar excluidos
-   definitivamente.
-3. Debe permitirse recuperar periodos
-   anteriores únicamente mediante una acción
-   explícita de usuario.
+Desactivar una plantilla impide generar mensualidades
+nuevas mientras permanezca inactiva.
 
-Las opciones 2 y 3 pueden requerir almacenar
-historial de activación o decisiones por periodo.
+Al reactivarla, vuelven a poder generarse los periodos
+válidos que todavía no tengan una ocurrencia, incluidos
+aquellos en los que la plantilla estuvo desactivada.
 
-No cambiar esta política implícitamente
-como parte de una optimización técnica.
+La recuperación requiere una solicitud explícita de
+generación. Reactivar una plantilla nunca crea
+mensualidades automáticamente.
+
+La generación respeta siempre:
+
+- El mes original de creación de la plantilla.
+- La fecha inicial y la fecha final vigentes.
+- La unicidad por plantilla y periodo.
+- La conservación de las instantáneas históricas.
+- La irreversibilidad de los estados confirmed y skipped.
+
+Esta política no requiere almacenar un historial
+de periodos de activación y desactivación.
+
+Cualquier cambio posterior de esta regla deberá
+tratarse como una decisión de producto.

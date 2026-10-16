@@ -1308,6 +1308,387 @@ final class OccurrenceServiceIntegrationTest extends OrmIntegrationTestCase {
     }
 
     /**
+     * Una generación concurrente no debe utilizar los
+     * datos anteriores a una edición confirmada.
+     */
+    public function testTemplateEditDuringGenerationUsesCurrentSnapshot(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+
+        $second = $this->createSecondConnection();
+
+        try {
+            $this->lockSpaceForConcurrency($space_id);
+
+            // Simula una edición en curso. La transacción
+            // principal conserva el bloqueo del espacio.
+            $stmt = $this->db->prepare(
+                'UPDATE `recurring_transaction`
+                 SET amount = ?,
+                     concept = ?,
+                     day_of_month = ?
+                 WHERE id = ?
+                   AND id_space = ?'
+            );
+            $stmt->execute([
+                '225.40',
+                'Alquiler actualizado',
+                20,
+                $recurring->id,
+                $space_id
+            ]);
+
+            $this->assertSame(1, $stmt->rowCount());
+
+            $this->assertGenerationBlockedBySpace(
+                $second,
+                $space_id,
+                $owner_id,
+                $recurring->id,
+                $period
+            );
+
+            // La edición pasa a ser visible.
+            $this->assertTrue($this->db->commit());
+        }
+        finally {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+        }
+
+        // Al reintentar, la instantánea debe reflejar
+        // los valores actuales, nunca los anteriores.
+        $generated = (new OccurrenceService())->generate(
+            $space_id, $owner_id, $recurring->id, $period
+        );
+
+        $this->assertTrue($generated['created']);
+        $this->assertSame(
+            '225.40',
+            $generated['occurrence']->amount
+        );
+        $this->assertSame(
+            'Alquiler actualizado',
+            $generated['occurrence']->concept
+        );
+        $this->assertSame(
+            substr($period, 0, 8) . '20',
+            $generated['occurrence']->scheduled_date
+        );
+
+        $this->assertSame(
+            1,
+            $this->countOccurrences($recurring->id)
+        );
+        $this->assertSame(
+            0,
+            $this->countSpaceTransactions($space_id)
+        );
+        $this->assertFalse($this->db->inTransaction());
+    }
+
+    /**
+     * Una desactivación confirmada impide crear la
+     * mensualidad hasta que se reactive la plantilla.
+     */
+    public function testTemplateDeactivationDuringGenerationPreventsNewOccurrence(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+
+        $second = $this->createSecondConnection();
+
+        try {
+            $this->lockSpaceForConcurrency($space_id);
+
+            $stmt = $this->db->prepare(
+                'UPDATE `recurring_transaction`
+                 SET active = 0
+                 WHERE id = ?
+                   AND id_space = ?'
+            );
+            $stmt->execute([
+                $recurring->id,
+                $space_id
+            ]);
+
+            $this->assertSame(1, $stmt->rowCount());
+
+            $this->assertGenerationBlockedBySpace(
+                $second,
+                $space_id,
+                $owner_id,
+                $recurring->id,
+                $period
+            );
+
+            $this->assertTrue($this->db->commit());
+        }
+        finally {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+        }
+
+        // La plantilla ya está desactivada.
+        try {
+            (new OccurrenceService())->generate(
+                $space_id,
+                $owner_id,
+                $recurring->id,
+                $period
+            );
+
+            $this->fail(
+                'Se ha generado una mensualidad de una plantilla inactiva.'
+            );
+        }
+        catch (
+            \Osumi\OsumiFramework\App\Service\Recurring\OccurrenceNotEligibleException $e
+        ) {
+            $this->assertSame(
+                'La plantilla está desactivada.',
+                $e->getMessage()
+            );
+        }
+
+        $this->assertSame(
+            0,
+            $this->countOccurrences($recurring->id)
+        );
+
+        // La opción A permite recuperar expresamente
+        // el mes válido después de reactivar.
+        (new RecurringService())->setActive(
+            $space_id,
+            $owner_id,
+            $recurring->id,
+            true
+        );
+
+        $generated = (new OccurrenceService())->generate(
+            $space_id,
+            $owner_id,
+            $recurring->id,
+            $period
+        );
+
+        $this->assertTrue($generated['created']);
+        $this->assertSame(
+            1,
+            $this->countOccurrences($recurring->id)
+        );
+        $this->assertSame(
+            0,
+            $this->countSpaceTransactions($space_id)
+        );
+        $this->assertFalse($this->db->inTransaction());
+    }
+
+    /**
+     * Una membresía dada de baja durante la contención
+     * no puede utilizarse para generar mensualidades.
+     */
+    public function testMemberDepartureDuringGenerationRevokesAccess(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+
+        $member_id = $this->createUser();
+
+        // Preparar una membresía inicialmente activa.
+        $stmt = $this->db->prepare(
+            'INSERT INTO `space_member`
+             (id_space, id_user)
+             VALUES (?, ?)'
+        );
+        $stmt->execute([$space_id, $member_id]);
+
+        $second = $this->createSecondConnection();
+
+        try {
+            $this->lockSpaceForConcurrency($space_id);
+
+            // Simular la actualización de membresía que
+            // realiza la operación de baja del servicio.
+            $stmt = $this->db->prepare(
+                'UPDATE `space_member`
+                 SET left_at = NOW()
+                 WHERE id_space = ?
+                   AND id_user = ?
+                   AND left_at IS NULL'
+            );
+            $stmt->execute([$space_id, $member_id]);
+
+            $this->assertSame(1, $stmt->rowCount());
+
+            $this->assertGenerationBlockedBySpace(
+                $second,
+                $space_id,
+                $member_id,
+                $recurring->id,
+                $period
+            );
+
+            $this->assertTrue($this->db->commit());
+        }
+        finally {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+        }
+
+        // El intento anterior no debe haber creado nada.
+        $this->assertSame(
+            0,
+            $this->countOccurrences($recurring->id)
+        );
+
+        // La generación posterior a la baja debe
+        // comprobar nuevamente la membresía.
+        try {
+            (new OccurrenceService())->generate(
+                $space_id,
+                $member_id,
+                $recurring->id,
+                $period
+            );
+
+            $this->fail(
+                'Un miembro dado de baja ha podido generar una mensualidad.'
+            );
+        }
+        catch (DomainException $e) {
+            $this->assertSame(
+                'No tienes acceso a este espacio.',
+                $e->getMessage()
+            );
+        }
+
+        $this->assertSame(
+            0,
+            $this->countOccurrences($recurring->id)
+        );
+
+        // El propietario sigue conservando sus permisos.
+        $generated = (new OccurrenceService())->generate(
+            $space_id,
+            $owner_id,
+            $recurring->id,
+            $period
+        );
+
+        $this->assertTrue($generated['created']);
+        $this->assertSame(
+            1,
+            $this->countOccurrences($recurring->id)
+        );
+        $this->assertSame(
+            0,
+            $this->countSpaceTransactions($space_id)
+        );
+        $this->assertFalse($this->db->inTransaction());
+    }
+
+    /**
+     * Inicia una transacción y bloquea el espacio
+     * utilizando la conexión principal de integración.
+     *
+     * @param int $space_id Espacio que se bloqueará.
+     * @return void
+     */
+    private function lockSpaceForConcurrency(int $space_id): void {
+        $this->assertTrue($this->db->beginTransaction());
+
+        $stmt = $this->db->prepare(
+            'SELECT id FROM `space`
+             WHERE id = ? FOR UPDATE'
+        );
+        $stmt->execute([$space_id]);
+
+        $this->assertSame(
+            $space_id,
+            (int) $stmt->fetchColumn()
+        );
+    }
+
+    /**
+     * Comprueba que la generación sobre otra sesión
+     * respeta el bloqueo transaccional del espacio.
+     *
+     * La segunda conexión utiliza el timeout reducido
+     * establecido por createSecondConnection().
+     *
+     * @param PDO $second Segunda conexión validada.
+     * @param int $space_id Espacio contable.
+     * @param int $user_id Usuario que solicita generar.
+     * @param int $recurring_id Plantilla recurrente.
+     * @param string $period Primer día del mes.
+     * @return void
+     */
+    private function assertGenerationBlockedBySpace(
+        PDO $second,
+        int $space_id,
+        int $user_id,
+        int $recurring_id,
+        string $period
+    ): void {
+        $original_core = $GLOBALS['core'];
+
+        try {
+            $this->setOrmConnection($second);
+
+            try {
+                (new OccurrenceService())->generate(
+                    $space_id,
+                    $user_id,
+                    $recurring_id,
+                    $period
+                );
+
+                $this->fail(
+                    'La generación ha ignorado el bloqueo del espacio.'
+                );
+            }
+            catch (PDOException $e) {
+                $this->assertSame(
+                    1205,
+                    (int) ($e->errorInfo[1] ?? 0),
+                    'Se esperaba un timeout de bloqueo InnoDB.'
+                );
+            }
+
+            // OccurrenceService debe haber revertido
+            // la transacción después del timeout.
+            $this->assertFalse($second->inTransaction());
+        }
+        finally {
+            $GLOBALS['core'] = $original_core;
+
+            if ($second->inTransaction()) {
+                $second->rollBack();
+            }
+        }
+    }
+
+    /**
      * Cuenta los movimientos reales registrados en un espacio.
      *
      * @param int $space_id Espacio.
