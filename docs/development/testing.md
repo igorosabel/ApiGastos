@@ -57,6 +57,40 @@ Cuando se añada o modifique un endpoint, comprobar:
 - Persistencia y efectos secundarios.
 - Respuestas de validación y errores.
 
+## Pruebas de concurrencia con MariaDB
+
+Las pruebas de contención utilizan dos conexiones PDO
+independientes contra la base `gastos_test`.
+
+Antes de realizar operaciones se verifica el nombre
+de la base de datos de ambas conexiones.
+
+La primera conexión mantiene un bloqueo transaccional
+mediante `SELECT ... FOR UPDATE`.
+
+La segunda ejecuta el servicio real usando su propia
+conexión y un tiempo de espera InnoDB limitado a un
+segundo.
+
+Las pruebas comprueban:
+
+- Que la operación respeta el bloqueo.
+- Que el timeout produce una reversión limpia.
+- Que no quedan escrituras parciales.
+- Que la operación puede reintentarse correctamente.
+- Que no se generan ocurrencias ni movimientos duplicados.
+
+Estas pruebas verifican contención real entre dos
+sesiones de base de datos, pero no constituyen una
+prueba de carga ni simulan dos peticiones HTTP
+ejecutándose simultáneamente.
+
+Siempre deben restaurarse las conexiones, transacciones
+y el contexto global de OFW mediante `finally`.
+
+El timeout reducido solo se utiliza en la sesión
+secundaria de pruebas y no debe aplicarse en producción.
+
 ## Comandos
 
 ```bash

@@ -1080,6 +1080,234 @@ final class OccurrenceServiceIntegrationTest extends OrmIntegrationTestCase {
     }
 
     /**
+     * Comprueba que una generación concurrente respeta
+     * el bloqueo del espacio y puede reintentarse.
+     */
+    public function testGenerationWaitsForSpaceLock(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+
+        $second = $this->createSecondConnection();
+        $original_core = $GLOBALS['core'];
+
+        try {
+            // La primera conexión mantiene el bloqueo
+            // utilizado por las operaciones económicas.
+            $this->assertTrue($this->db->beginTransaction());
+
+            $stmt = $this->db->prepare(
+                'SELECT id FROM `space`
+                 WHERE id = ? FOR UPDATE'
+            );
+            $stmt->execute([$space_id]);
+
+            $this->assertSame(
+                $space_id,
+                (int) $stmt->fetchColumn()
+            );
+
+            // Ejecutar el servicio real mediante una
+            // segunda conexión física a MariaDB.
+            $this->setOrmConnection($second);
+
+            try {
+                (new OccurrenceService())->generate(
+                    $space_id,
+                    $owner_id,
+                    $recurring->id,
+                    $period
+                );
+
+                $this->fail(
+                    'La generación ha ignorado el bloqueo.'
+                );
+            }
+            catch (PDOException $e) {
+                $this->assertSame(
+                    1205,
+                    (int) ($e->errorInfo[1] ?? 0),
+                    'Se esperaba un timeout de bloqueo InnoDB.'
+                );
+            }
+
+            // El servicio debe haber revertido su transacción.
+            $this->assertFalse($second->inTransaction());
+        }
+        finally {
+            // Restaurar siempre la conexión principal
+            // antes de continuar con la integración.
+            $GLOBALS['core'] = $original_core;
+
+            if ($second->inTransaction()) {
+                $second->rollBack();
+            }
+
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+        }
+
+        // El intento bloqueado no debe haber creado nada.
+        $this->assertSame(
+            0,
+            $this->countOccurrences($recurring->id)
+        );
+
+        // Sin el bloqueo, la generación funciona.
+        $service = new OccurrenceService();
+
+        $first = $service->generate(
+            $space_id, $owner_id, $recurring->id, $period
+        );
+
+        $this->assertTrue($first['created']);
+
+        // Un nuevo intento conserva la idempotencia.
+        $second_attempt = $service->generate(
+            $space_id, $owner_id, $recurring->id, $period
+        );
+
+        $this->assertFalse($second_attempt['created']);
+        $this->assertSame(
+            $first['occurrence']->id,
+            $second_attempt['occurrence']->id
+        );
+
+        $this->assertSame(
+            1,
+            $this->countOccurrences($recurring->id)
+        );
+        $this->assertSame(
+            0,
+            $this->countSpaceTransactions($space_id)
+        );
+        $this->assertFalse($this->db->inTransaction());
+    }
+
+    /**
+     * Comprueba que una confirmación no puede avanzar
+     * si otra conexión tiene bloqueada la ocurrencia.
+     */
+    public function testConfirmationWaitsForOccurrenceLock(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $recurring = $this->recurring(
+            $space_id, $owner_id, $category_id, 10
+        );
+
+        $service = new OccurrenceService();
+
+        $generated = $service->generate(
+            $space_id,
+            $owner_id,
+            $recurring->id,
+            $this->currentPeriod()
+        );
+
+        $occurrence_id = $generated['occurrence']->id;
+
+        $this->assertNotNull($occurrence_id);
+
+        $second = $this->createSecondConnection();
+        $original_core = $GLOBALS['core'];
+
+        try {
+            $this->assertTrue($this->db->beginTransaction());
+
+            // En este caso bloqueamos directamente la
+            // ocurrencia, no el espacio.
+            $stmt = $this->db->prepare(
+                'SELECT id FROM `recurring_occurrence`
+                 WHERE id = ? FOR UPDATE'
+            );
+            $stmt->execute([$occurrence_id]);
+
+            $this->assertSame(
+                $occurrence_id,
+                (int) $stmt->fetchColumn()
+            );
+
+            $this->setOrmConnection($second);
+
+            try {
+                (new OccurrenceService())->resolve(
+                    $space_id,
+                    $owner_id,
+                    $occurrence_id,
+                    'confirm'
+                );
+
+                $this->fail(
+                    'La confirmación ha ignorado el bloqueo.'
+                );
+            }
+            catch (PDOException $e) {
+                $this->assertSame(
+                    1205,
+                    (int) ($e->errorInfo[1] ?? 0),
+                    'Se esperaba un timeout de bloqueo InnoDB.'
+                );
+            }
+
+            $this->assertFalse($second->inTransaction());
+        }
+        finally {
+            $GLOBALS['core'] = $original_core;
+
+            if ($second->inTransaction()) {
+                $second->rollBack();
+            }
+
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+        }
+
+        // El intento fallido no ha confirmado nada.
+        $stmt = $this->db->prepare(
+            'SELECT status, id_transaction
+             FROM `recurring_occurrence`
+             WHERE id = ?'
+        );
+        $stmt->execute([$occurrence_id]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        $this->assertIsArray($row);
+        $this->assertSame('pending', $row['status']);
+        $this->assertNull($row['id_transaction']);
+
+        $this->assertSame(
+            0,
+            $this->countSpaceTransactions($space_id)
+        );
+
+        // Liberado el bloqueo, confirmar debe funcionar.
+        $resolved = (new OccurrenceService())->resolve(
+            $space_id,
+            $owner_id,
+            $occurrence_id,
+            'confirm'
+        );
+
+        $this->assertSame('confirmed', $resolved->status);
+        $this->assertNotNull($resolved->id_transaction);
+
+        $this->assertSame(
+            1,
+            $this->countSpaceTransactions($space_id)
+        );
+        $this->assertFalse($this->db->inTransaction());
+    }
+
+    /**
      * Cuenta los movimientos reales registrados en un espacio.
      *
      * @param int $space_id Espacio.
@@ -1188,5 +1416,73 @@ final class OccurrenceServiceIntegrationTest extends OrmIntegrationTestCase {
         $this->users[] = $id;
 
         return $id;
+    }
+
+    /**
+     * Abre una segunda conexión independiente a gastos_test.
+     *
+     * Limita el tiempo de espera de bloqueos exclusivamente
+     * en esta sesión para permitir pruebas de contención.
+     *
+     * @return PDO Segunda conexión de integración.
+     */
+    private function createSecondConnection(): PDO {
+        $dsn = getenv('GASTOS_TEST_DSN');
+        $user = getenv('GASTOS_TEST_USER');
+        $password = getenv('GASTOS_TEST_PASSWORD');
+
+        if (
+            !is_string($dsn) ||
+            !is_string($user) ||
+            !is_string($password)
+        ) {
+            throw new RuntimeException(
+                'Falta configurar la conexión de integración.'
+            );
+        }
+
+        $connection = new PDO(
+            $dsn,
+            $user,
+            $password,
+            [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_EMULATE_PREPARES => false
+            ]
+        );
+
+        // Comprobación obligatoria antes de utilizar
+        // esta conexión para cualquier operación.
+        $database = $connection->query(
+            'SELECT DATABASE()'
+        )->fetchColumn();
+
+        if ($database !== 'gastos_test') {
+            throw new RuntimeException(
+                'Las pruebas de concurrencia solo pueden usar gastos_test.'
+            );
+        }
+
+        // Asegurar que se trata de dos sesiones distintas.
+        $main_connection_id = (int) $this->db
+            ->query('SELECT CONNECTION_ID()')
+            ->fetchColumn();
+
+        $second_connection_id = (int) $connection
+            ->query('SELECT CONNECTION_ID()')
+            ->fetchColumn();
+
+        $this->assertNotSame(
+            $main_connection_id,
+            $second_connection_id,
+            'Las conexiones deben ser sesiones independientes.'
+        );
+
+        // Aplicar el timeout únicamente a la segunda sesión.
+        $connection->exec(
+            'SET SESSION innodb_lock_wait_timeout = 1'
+        );
+
+        return $connection;
     }
 }
