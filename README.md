@@ -10,9 +10,9 @@ La aplicación está diseñada alrededor del concepto de **espacios**, que permi
 
 Cada usuario dispone de un espacio personal y puede crear o participar en espacios compartidos, como una familia, una comunidad de vecinos o una asociación.
 
-Las principales funcionalidades previstas son:
+`El backend comprende los siguientes ámbitos funcionales:`
 
-- **Usuarios:** registro, autenticación y gestión de cuentas personales.
+- **Usuarios:** registro, autenticación JWT y consulta del usuario actual. La gestión avanzada del perfil y la cuenta queda pendiente.
 - **Espacios:** creación y administración de espacios privados y compartidos, con invitaciones y gestión de miembros.
 - **Movimientos:** registro de ingresos y gastos, organizados por fecha, concepto y categoría.
 - **Categorías:** árboles jerárquicos de categorías independientes para cada espacio.
@@ -100,13 +100,48 @@ php of generateModelFromDB
 
 Los modelos existentes en el repositorio pueden incluir ajustes propios de la aplicación, por lo que no deben sobrescribirse sin revisar previamente los cambios generados.
 
+### Documentación adicional
+
+- [Guía de despliegue](docs/deployment.md)
+- [Ciclo de vida de recurrentes](docs/api/recurring.md)
+- [Contratos de informes](docs/api/reports.md)
+- [Estrategia de pruebas](docs/development/testing.md)
+
+Antes de realizar una instalación en producción,
+revisar la guía de despliegue y la configuración
+privada de la API.
+
 ## Estado del proyecto
 
-**En desarrollo.**
+**En desarrollo. Todavía no se ha publicado una
+versión estable.**
 
-El esquema inicial de la base de datos y los modelos ORM están preparados. Los servicios de autenticación, gestión de espacios, movimientos, recurrentes e informes se implementarán progresivamente.
+El backend dispone actualmente de:
 
-La aplicación todavía no dispone de una versión estable.
+- Registro de usuarios, autenticación JWT y usuario actual.
+- Espacios personales y compartidos.
+- Invitaciones y gestión de miembros.
+- Categorías jerárquicas por espacio.
+- Creación, consulta, edición y eliminación
+  controlada de movimientos económicos.
+- Plantillas de ingresos y gastos recurrentes.
+- Generación individual y masiva de mensualidades.
+- Confirmación y omisión de ocurrencias.
+- Informes mensuales, por categorías y de evolución.
+- Previsiones económicas separadas de los movimientos
+  reales.
+- Pruebas unitarias y de integración para los
+  principales contratos y reglas de negocio.
+
+La generación de mensualidades recurrentes es
+explícita. Actualmente no existe un proceso
+automático programado.
+
+Todavía quedan trabajos de preparación de release,
+documentación operativa y validación del despliegue.
+
+El frontend Angular se desarrolla y versiona
+independientemente.
 
 ## Desarrollo
 
