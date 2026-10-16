@@ -65,6 +65,60 @@ Cada plantilla se procesa de forma
 independiente; el lote completo no es
 una única transacción.
 
+## Fallos parciales y reintentos
+
+La generación por espacio no es una operación
+atómica para todo el lote.
+
+Cada plantilla se procesa en su propia transacción.
+Una ocurrencia creada correctamente queda guardada
+aunque falle el procesamiento de una plantilla posterior.
+
+Los errores operativos, como un timeout de bloqueo
+de MariaDB, no se contabilizan como `skipped`.
+Se propagan y provocan el fallo de la petición.
+
+Si el lote falla, no se devuelve una respuesta de
+éxito con contadores parciales. Sin embargo, las
+ocurrencias confirmadas anteriormente pueden
+permanecer almacenadas.
+
+### Recuperación
+
+El cliente puede reintentar la misma petición:
+
+`POST /recurring/generate-space`
+
+Con los mismos `spaceId` y `period`.
+
+Durante el reintento:
+
+- Las ocurrencias ya existentes se reutilizan.
+- Las que faltan pueden generarse si las plantillas
+  siguen activas y sus fechas continúan siendo válidas.
+- Las ocurrencias confirmadas u omitidas no se reabren.
+- No se generan duplicados para la misma plantilla
+  y periodo.
+- El nuevo resultado refleja la situación actual,
+  no los contadores del intento que falló.
+
+La API no realiza automáticamente reintentos de
+todo el lote.
+
+Antes de implementar reintentos automáticos desde
+Angular, será necesario definir cuándo reintentar,
+cómo comunicar los errores persistentes y cómo
+evitar solicitudes simultáneas innecesarias.
+
+### Garantía
+
+El comportamiento garantizado es idempotencia
+por plantilla y periodo, no atomicidad global.
+
+Un fallo de una plantilla no revierte las
+mensualidades previamente confirmadas por otras
+transacciones.
+
 ## Desactivación y reactivación
 
 Mientras una plantilla está inactiva:

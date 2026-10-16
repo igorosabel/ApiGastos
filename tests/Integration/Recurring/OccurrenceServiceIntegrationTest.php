@@ -5,6 +5,7 @@ require_once dirname(__DIR__) . '/OrmIntegrationTestCase.php';
 use Osumi\OsumiFramework\App\Service\Category\CategoryService;
 use Osumi\OsumiFramework\App\Service\Recurring\OccurrenceService;
 use Osumi\OsumiFramework\App\Service\Recurring\RecurringService;
+use Osumi\OsumiFramework\App\Service\Recurring\SpaceOccurrenceService;
 use Osumi\OsumiFramework\App\Service\Space\SpaceService;
 
 final class OccurrenceServiceIntegrationTest extends OrmIntegrationTestCase {
@@ -1602,6 +1603,235 @@ final class OccurrenceServiceIntegrationTest extends OrmIntegrationTestCase {
         );
         $this->assertSame(
             0,
+            $this->countSpaceTransactions($space_id)
+        );
+        $this->assertFalse($this->db->inTransaction());
+    }
+
+    /**
+     * Un fallo en la segunda plantilla conserva la primera.
+     * Reintentar el lote completa las restantes sin duplicar
+     * ni modificar las ocurrencias ya resueltas.
+     */
+    public function testBulkRetryAfterPartialLockFailure(): void {
+        [$space_id, $owner_id, $category_id] =
+            $this->prepareSpace();
+
+        $period = $this->currentPeriod();
+        $recurring_service = new RecurringService();
+
+        // El lote procesa las plantillas por ID ascendente.
+        $first = $recurring_service->create(
+            $space_id, $owner_id, $category_id,
+            'expense', '500.00', 'Alquiler', 5, $period
+        );
+
+        $second_template = $recurring_service->create(
+            $space_id, $owner_id, $category_id,
+            'expense', '80.00', 'Electricidad', 10, $period
+        );
+
+        $third = $recurring_service->create(
+            $space_id, $owner_id, $category_id,
+            'expense', '40.00', 'Internet', 15, $period
+        );
+
+        $this->assertNotNull($first->id);
+        $this->assertNotNull($second_template->id);
+        $this->assertNotNull($third->id);
+
+        $this->assertLessThan(
+            $second_template->id,
+            $first->id
+        );
+        $this->assertLessThan(
+            $third->id,
+            $second_template->id
+        );
+
+        // Usa el auxiliar ya existente: una segunda sesión
+        // de gastos_test con innodb_lock_wait_timeout = 1.
+        $runner = $this->createSecondConnection();
+        $original_core = $GLOBALS['core'];
+
+        try {
+            $this->assertTrue($this->db->beginTransaction());
+
+            // Bloquear únicamente la segunda plantilla.
+            // La primera debe poder generarse y confirmarse.
+            $stmt = $this->db->prepare(
+                'SELECT id
+                 FROM `recurring_transaction`
+                 WHERE id = ?
+                   AND id_space = ?
+                 FOR UPDATE'
+            );
+
+            $stmt->execute([
+                $second_template->id,
+                $space_id
+            ]);
+
+            $this->assertSame(
+                $second_template->id,
+                (int) $stmt->fetchColumn()
+            );
+
+            // El lote se ejecuta en otra conexión física.
+            $this->setOrmConnection($runner);
+
+            try {
+                (new SpaceOccurrenceService())->generate(
+                    $space_id,
+                    $owner_id,
+                    $period
+                );
+
+                $this->fail(
+                    'El lote ha ignorado el bloqueo de la segunda plantilla.'
+                );
+            }
+            catch (PDOException $e) {
+                $this->assertSame(
+                    1205,
+                    (int) ($e->errorInfo[1] ?? 0),
+                    'Se esperaba un timeout de bloqueo InnoDB.'
+                );
+            }
+
+            // La transacción que ha fallado se ha revertido.
+            $this->assertFalse($runner->inTransaction());
+        }
+        finally {
+            $GLOBALS['core'] = $original_core;
+
+            if ($runner->inTransaction()) {
+                $runner->rollBack();
+            }
+
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+        }
+
+        // La primera plantilla se confirmó antes del fallo.
+        // Las siguientes no llegaron a generarse.
+        $this->assertSame(1, $this->countOccurrences($first->id));
+        $this->assertSame(
+            0,
+            $this->countOccurrences($second_template->id)
+        );
+        $this->assertSame(0, $this->countOccurrences($third->id));
+
+        $this->assertSame(
+            0,
+            $this->countSpaceTransactions($space_id)
+        );
+
+        // Guardar el identificador original para demostrar
+        // que no cambia al reintentar el lote.
+        $stmt = $this->db->prepare(
+            'SELECT id
+             FROM `recurring_occurrence`
+             WHERE id_recurring_transaction = ?
+               AND period = ?'
+        );
+
+        $stmt->execute([$first->id, $period]);
+
+        $original_occurrence_id = (int) $stmt->fetchColumn();
+
+        $this->assertGreaterThan(0, $original_occurrence_id);
+
+        // Una ocurrencia ya generada puede resolverse
+        // mientras el lote completo sigue incompleto.
+        $resolved = (new OccurrenceService())->resolve(
+            $space_id,
+            $owner_id,
+            $original_occurrence_id,
+            'confirm'
+        );
+
+        $this->assertSame('confirmed', $resolved->status);
+        $this->assertSame(
+            1,
+            $this->countSpaceTransactions($space_id)
+        );
+
+        // Sin el bloqueo, repetir la misma operación
+        // debe encontrar la primera y crear las otras dos.
+        $generation_service = new SpaceOccurrenceService();
+
+        $retry = $generation_service->generate(
+            $space_id,
+            $owner_id,
+            $period
+        );
+
+        $this->assertSame([
+            'created' => 2,
+            'existing' => 1,
+            'skipped' => 0,
+            'total' => 3
+        ], $retry);
+
+        $this->assertSame(1, $this->countOccurrences($first->id));
+        $this->assertSame(
+            1,
+            $this->countOccurrences($second_template->id)
+        );
+        $this->assertSame(1, $this->countOccurrences($third->id));
+
+        // La confirmación anterior debe mantenerse.
+        $stmt = $this->db->prepare(
+            'SELECT id, status, id_transaction
+             FROM `recurring_occurrence`
+             WHERE id_recurring_transaction = ?
+               AND period = ?'
+        );
+
+        $stmt->execute([$first->id, $period]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        $this->assertIsArray($row);
+        $this->assertSame(
+            $original_occurrence_id,
+            (int) $row['id']
+        );
+        $this->assertSame('confirmed', $row['status']);
+        $this->assertSame(
+            $resolved->id_transaction,
+            (int) $row['id_transaction']
+        );
+
+        $this->assertSame(
+            1,
+            $this->countSpaceTransactions($space_id)
+        );
+
+        // Una tercera ejecución ya no genera nada.
+        $repeated = $generation_service->generate(
+            $space_id,
+            $owner_id,
+            $period
+        );
+
+        $this->assertSame([
+            'created' => 0,
+            'existing' => 3,
+            'skipped' => 0,
+            'total' => 3
+        ], $repeated);
+
+        $this->assertSame(1, $this->countOccurrences($first->id));
+        $this->assertSame(
+            1,
+            $this->countOccurrences($second_template->id)
+        );
+        $this->assertSame(1, $this->countOccurrences($third->id));
+
+        $this->assertSame(
+            1,
             $this->countSpaceTransactions($space_id)
         );
         $this->assertFalse($this->db->inTransaction());
