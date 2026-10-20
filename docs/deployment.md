@@ -88,6 +88,33 @@ No publicarlo ni incluirlo en logs o documentación.
 
 Cambiar el secreto invalida los JWT anteriores.
 
+
+### Configuración SMTP
+
+ApiGastos utiliza `osumionline/plugin-email-smtp`
+para el envío de correos mediante SMTP autenticado.
+
+La configuración privada debe incluir:
+
+- `mailing_from`: dirección remitente.
+- `plugins.email_smtp.host`: servidor SMTP.
+- `plugins.email_smtp.port`: puerto.
+- `plugins.email_smtp.secure`: seguridad de transporte.
+- `plugins.email_smtp.user`: usuario SMTP.
+- `plugins.email_smtp.pass`: contraseña SMTP.
+
+El plugin obtiene sus parámetros mediante
+`getPluginConfig('email_smtp')` de Osumi Framework.
+
+La configuración anterior situada en un bloque
+`smtp` independiente no es utilizada por este plugin.
+
+No incluir las credenciales reales en Git, logs,
+tests ni documentación pública.
+
+La aceptación del mensaje por el servidor SMTP
+no garantiza su entrega final al destinatario.
+
 ### Validación previa de configuración
 
 Antes de activar la API en producción, ejecutar:

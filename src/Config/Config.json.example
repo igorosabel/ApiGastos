@@ -1,28 +1,32 @@
+
 {
-	"db": {
-		"host": "host",
-		"user": "user",
-		"pass": "pass",
-		"name": "name"
-	},
-	"allow-cross-origin": true,
-	"cookies": {
-		"prefix": "",
-		"url": ""
-	},
-	"log_level": "ERROR",
-	"base_url": "https://apigastos.osumi.es/",
-	"admin_email": "",
-	"default_title": "Gastos",
-	"lang": "es",
-	"smtp": {
-		"host": "host",
-		"port": 587,
-		"secure": "tls",
-		"user": "user@email.com",
-		"pass": "password"
-	},
-	"extra": {
-		"jwt_secret": "value"
-	}
+  "db": {
+    "host": "host",
+    "user": "user",
+    "pass": "pass",
+    "name": "name"
+  },
+  "allow-cross-origin": true,
+  "cookies": {
+    "prefix": "",
+    "url": ""
+  },
+  "log_level": "ERROR",
+  "base_url": "https://apigastos.osumi.es/",
+  "admin_email": "",
+  "mailing_from": "notificaciones@example.com",
+  "default_title": "Gastos",
+  "lang": "es",
+  "plugins": {
+    "email_smtp": {
+      "host": "smtp.example.com",
+      "port": 587,
+      "secure": "tls",
+      "user": "notificaciones@example.com",
+      "pass": "smtp-password"
+    }
+  },
+  "extra": {
+    "jwt_secret": "value"
+  }
 }
