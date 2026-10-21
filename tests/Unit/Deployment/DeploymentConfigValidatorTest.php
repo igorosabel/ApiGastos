@@ -102,6 +102,39 @@ final class DeploymentConfigValidatorTest extends TestCase {
     }
 
     /**
+     * Detecta una configuración incompleta del correo.
+     */
+    public function testRejectsInvalidEmailConfiguration(): void {
+        $config = $this->makeConfig(
+            mailing_from: '',
+            frontend_url: 'http://gastos.example.test',
+            smtp: []
+        );
+
+        $errors = (new DeploymentConfigValidator())
+            ->validate($config);
+
+        $output = implode("\n", $errors);
+
+        $this->assertStringContainsString(
+            'mailing_from',
+            $output
+        );
+        $this->assertStringContainsString(
+            'extra.frontend_url',
+            $output
+        );
+        $this->assertStringContainsString(
+            'plugins.email_smtp.host',
+            $output
+        );
+        $this->assertStringContainsString(
+            'plugins.email_smtp.port',
+            $output
+        );
+    }
+
+    /**
      * Crea una configuración simulada sin leer
      * archivos privados ni conectar a MariaDB.
      */
@@ -112,7 +145,10 @@ final class DeploymentConfigValidatorTest extends TestCase {
         string $name = 'gastos',
         string $url = 'https://api.example.test/',
         string $secret = '0123456789abcdef0123456789abcdef',
-        string $log_level = 'ERROR'
+        string $log_level = 'ERROR',
+        string $mailing_from = 'avisos@example.test',
+        string $frontend_url = 'https://gastos.example.test',
+        ?array $smtp = null
     ): OConfig {
         $config = $this->createStub(OConfig::class);
 
@@ -127,13 +163,28 @@ final class DeploymentConfigValidatorTest extends TestCase {
         );
 
         $config->method('getExtra')->willReturnCallback(
-            static fn(string $key): ?string =>
-                $key === 'jwt_secret' ? $secret : null
+            static fn(string $key): ?string => match ($key) {
+                'jwt_secret' => $secret,
+                'frontend_url' => $frontend_url,
+                default => null
+            }
         );
 
         $config->method('getLog')->willReturnCallback(
             static fn(string $key): string => $log_level
         );
+
+        $config->method('getMailingFrom')
+            ->willReturn($mailing_from);
+
+        $config->method('getPluginConfig')
+            ->willReturn($smtp ?? [
+                'host' => 'smtp.internal.test',
+                'port' => 587,
+                'secure' => 'tls',
+                'user' => 'avisos@example.test',
+                'pass' => 'private-smtp-password'
+            ]);
 
         return $config;
     }

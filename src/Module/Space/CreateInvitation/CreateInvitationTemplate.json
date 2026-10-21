@@ -7,6 +7,7 @@
         "token": {{ token | plain }},
         "expires_at": {{ expires_at | plain }}
     },
+    "email_sent": {{ email_sent | bool }},
     "error": {{ error | plain }},
     "message": {{ message | plain }}
 }

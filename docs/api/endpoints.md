@@ -265,12 +265,61 @@ Crea una invitación para incorporar una persona a un espacio compartido.
     "token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "expires_at": "2026-10-23 13:00:00"
   },
+  "email_sent": true,
   "error": null,
   "message": null
 }
 ```
 
+- La invitación se guarda antes de intentar el envío SMTP.
+- `email_sent` indica si SMTP ha aceptado el mensaje.
+- Si `email_sent` es `false`, `success` sigue siendo `true` y el token devuelto puede utilizarse para compartir un enlace manualmente.
+- La invitación no puede duplicarse mientras permanezca pendiente.
+
 **Notas:** El token de invitación se entrega **solo al crearla** y se necesita para aceptarla; no aparece en los listados. Caduca a los 7 días. `409` para conflictos (p. ej., invitación pendiente duplicada).
+
+### `POST /spaces/invitations/resend`
+
+Reenvía una invitación pendiente del propietario autenticado.
+
+**Parámetros de entrada**
+
+| Parámetro | Tipo | Obligatorio | Descripción |
+|---|---|:---:|---|
+| `invitationId` | int | Sí | Identificador de la invitación a reenviar. |
+
+**Ejemplo de cuerpo JSON (POST)**
+
+```json
+{
+  "invitationId": 61
+}
+```
+
+**Respuesta HTTP 200:**
+
+```json
+{
+  "success": true,
+  "invitation": {
+    "id": 61,
+    "space_id": 12,
+    "email": "pepe@example.com",
+    "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "expires_at": "2026-10-27 12:00:00"
+  },
+  "email_sent": true,
+  "error": null,
+  "message": null
+}
+```
+
+- El token anterior deja de funcionar
+- La caducidad original no cambia
+- Debe transcurrir al menos un minuto desde la última emisión
+- Únicamente el propietario puede reenviar
+- Se devuelve `403` para falta de autorización y `409` si la invitación no está pendiente o todavía no se permite el reenvío.
+
 
 ### `POST /spaces/invitations/accept`
 

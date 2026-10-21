@@ -1,0 +1,13 @@
+{
+    "success": {{ success | bool }},
+    "invitation": {
+        "id": {{ invitation_id | number }},
+        "space_id": {{ space_id | number }},
+        "email": {{ email | plain }},
+        "token": {{ token | plain }},
+        "expires_at": {{ expires_at | plain }}
+    },
+    "email_sent": {{ email_sent | bool }},
+    "error": {{ error | plain }},
+    "message": {{ message | plain }}
+}

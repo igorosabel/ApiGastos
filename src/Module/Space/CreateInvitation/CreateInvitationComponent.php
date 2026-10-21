@@ -6,13 +6,14 @@ use DomainException;
 use InvalidArgumentException;
 use LogicException;
 use Osumi\OsumiFramework\App\DTO\Space\CreateSpaceInvitationDTO;
-use Osumi\OsumiFramework\App\Service\Space\SpaceInvitationService;
+use Osumi\OsumiFramework\App\Service\Space\SpaceInvitationNotificationService;
 use Osumi\OsumiFramework\Core\OComponent;
 use Osumi\OsumiFramework\Core\OMiddleware;
 
 class CreateInvitationComponent extends OComponent {
-    private SpaceInvitationService $invitation_service;
+    private SpaceInvitationNotificationService $invitation_service;
 
+    public bool $email_sent = false;
     public bool $success = false;
     public ?int $invitation_id = null;
     public ?int $space_id = null;
@@ -23,12 +24,12 @@ class CreateInvitationComponent extends OComponent {
     public ?string $message = null;
 
     /**
-     * Inicializa el servicio de invitaciones.
+     * Inicializa el coordinador de invitaciones.
      */
     public function __construct() {
         parent::__construct();
         $this->invitation_service = inject(
-            SpaceInvitationService::class
+            SpaceInvitationNotificationService::class
         );
     }
 
@@ -52,10 +53,10 @@ class CreateInvitationComponent extends OComponent {
         }
 
         try {
-            $result = $this->invitation_service->create(
-                $dto->spaceId,
-                $dto->idUser,
-                $dto->email
+            $result = $this->invitation_service->createAndSend(
+              $dto->spaceId,
+              $dto->idUser,
+              $dto->email
             );
 
             $invitation = $result['invitation'];
@@ -65,6 +66,7 @@ class CreateInvitationComponent extends OComponent {
             $this->email = $invitation->email;
             $this->token = $result['token'];
             $this->expires_at = $invitation->expires_at;
+            $this->email_sent = $result['email_sent'];
             $this->success = true;
 
             OMiddleware::setStatusCode(201);

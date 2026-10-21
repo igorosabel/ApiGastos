@@ -27,6 +27,7 @@
     }
   },
   "extra": {
-    "jwt_secret": "value"
+    "jwt_secret": "value",
+     "frontend_url": "https://gastos.example.com"
   }
 }

@@ -25,7 +25,7 @@ class SpaceInvitationService extends OService {
     * @param int $space_id Identificador del espacio.
     * @param int $user_id Identificador del usuario autenticado.
     * @param string $email Correo al que va dirigida.
-    * @return array{invitation: SpaceInvitation, token: string}
+    * @return array{invitation: SpaceInvitation, token: string, space_name: string}
     */
    public function create(
        int $space_id,
@@ -61,7 +61,7 @@ class SpaceInvitationService extends OService {
            // Todas las creaciones del mismo espacio adquieren
            // este bloqueo antes de comprobar duplicados.
            $stmt = $db->prepare(
-               'SELECT id, type, owner_id
+               'SELECT id, name, type, owner_id
                 FROM `space`
                 WHERE id = :space_id
                 FOR UPDATE'
@@ -171,7 +171,8 @@ class SpaceInvitationService extends OService {
 
            return [
                'invitation' => $invitation,
-               'token' => $token
+               'token' => $token,
+               'space_name' => (string) $space['name']
            ];
        }
        catch (Throwable $e) {
@@ -355,6 +356,122 @@ class SpaceInvitationService extends OService {
             }
 
             return $space;
+        }
+        catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Regenera el token de una invitación pendiente.
+     *
+     * El token anterior deja de ser válido.
+     * Conserva la caducidad original.
+     *
+     * @param int $invitation_id Identificador de invitación.
+     * @param int $user_id Propietario autenticado.
+     * @return array{invitation: SpaceInvitation, token: string, space_name: string}
+     */
+    public function resend(int $invitation_id, int $user_id): array {
+        if ($invitation_id <= 0 || $user_id <= 0) {
+            throw new InvalidArgumentException(
+                'Los identificadores no son válidos.'
+            );
+        }
+
+        $db = ODB::getInstance();
+
+        if (!$db->beginTransaction()) {
+            throw new RuntimeException(
+                'No se ha podido iniciar la transacción.'
+            );
+        }
+
+        try {
+            $stmt = $db->prepare(
+              'SELECT id_space, accepted_at, revoked_at,
+                      expires_at, updated_at
+               FROM `space_invitation`
+               WHERE id = :id
+               FOR UPDATE'
+            );
+
+            if (
+                $stmt === false ||
+                !$stmt->execute(['id' => $invitation_id])
+            ) {
+                throw new RuntimeException(
+                    'No se ha podido consultar la invitación.'
+                );
+            }
+
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!is_array($row)) {
+                throw new DomainException(
+                    'No tienes permiso para administrar esta invitación.'
+                );
+            }
+
+            $space = $this->requireSharedSpaceOwner(
+                (int) $row['id_space'],
+                $user_id
+            );
+
+            if (
+                $row['accepted_at'] !== null ||
+                $row['revoked_at'] !== null ||
+                strtotime($row['expires_at']) <= time()
+            ) {
+                throw new LogicException(
+                    'La invitación ya no está pendiente.'
+                );
+            }
+
+            if (
+                $row['updated_at'] !== null &&
+                strtotime($row['updated_at']) > time() - 60
+            ) {
+                throw new LogicException(
+                    'Debes esperar un minuto antes de reenviar la invitación.'
+                );
+            }
+
+            $invitation = SpaceInvitation::findOne([
+                'id' => $invitation_id
+            ]);
+
+            if ($invitation === null) {
+                throw new LogicException(
+                    'La invitación no está disponible.'
+                );
+            }
+
+            $token = bin2hex(random_bytes(32));
+
+            $invitation->token_hash = hash('sha256', $token);
+
+            if (!$invitation->save()) {
+                throw new RuntimeException(
+                    'No se ha podido renovar la invitación.'
+                );
+            }
+
+            if (!$db->commit()) {
+                throw new RuntimeException(
+                    'No se ha podido confirmar el reenvío.'
+                );
+            }
+
+            return [
+                'invitation' => $invitation,
+                'token' => $token,
+                'space_name' => (string) $space->name
+            ];
         }
         catch (Throwable $e) {
             if ($db->inTransaction()) {

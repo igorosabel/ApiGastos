@@ -115,6 +115,10 @@ tests ni documentación pública.
 La aceptación del mensaje por el servidor SMTP
 no garantiza su entrega final al destinatario.
 
+También se exige `extra.frontend_url`, correspondiente al origen HTTPS público del frontend
+
+El validador de despliegue comprobará estos datos antes de publicar.
+
 ### Validación previa de configuración
 
 Antes de activar la API en producción, ejecutar:

@@ -218,6 +218,182 @@ final class ManageSpaceInvitationsIntegrationTest extends OrmIntegrationTestCase
     }
 
     /**
+     * El reenvío sustituye el token sin cambiar la caducidad.
+     */
+    public function testResendRotatesToken(): void {
+        [$service, $owner_id, $space] = $this->prepareSpace();
+
+        $created = $service->create(
+            $space->id,
+            $owner_id,
+            'invitado@example.test'
+        );
+
+        $invitation_id = $created['invitation']->id;
+        $old_token = $created['token'];
+        $original_expiration = $created['invitation']->expires_at;
+
+        $stmt = $this->db->prepare(
+            'UPDATE `space_invitation`
+             SET updated_at = :updated_at
+             WHERE id = :id'
+        );
+
+        $stmt->execute([
+            'updated_at' => date('Y-m-d H:i:s', time() - 120),
+            'id' => $invitation_id
+        ]);
+
+        $result = $service->resend(
+            $invitation_id,
+            $owner_id
+        );
+
+        $this->assertSame(
+            $invitation_id,
+            $result['invitation']->id
+        );
+        $this->assertSame('Familia de prueba', $result['space_name']);
+        $this->assertNotSame($old_token, $result['token']);
+        $this->assertSame(
+            $original_expiration,
+            $result['invitation']->expires_at
+        );
+
+        $stmt = $this->db->prepare(
+            'SELECT token_hash
+             FROM `space_invitation`
+             WHERE id = ?'
+        );
+        $stmt->execute([$invitation_id]);
+
+        $stored_hash = $stmt->fetchColumn();
+
+        $this->assertSame(
+            hash('sha256', $result['token']),
+            $stored_hash
+        );
+        $this->assertNotSame(
+            hash('sha256', $old_token),
+            $stored_hash
+        );
+    }
+
+    /**
+     * El reenvío inmediato está limitado.
+     */
+    public function testResendRequiresCooldown(): void {
+        [$service, $owner_id, $space] = $this->prepareSpace();
+
+        $created = $service->create(
+            $space->id,
+            $owner_id,
+            'invitado@example.test'
+        );
+
+        $this->expectException(LogicException::class);
+
+        $service->resend(
+            $created['invitation']->id,
+            $owner_id
+        );
+    }
+
+    /**
+     * Otro usuario no puede reenviar la invitación.
+     */
+    public function testNonOwnerCannotResend(): void {
+        [$service, $owner_id, $space] = $this->prepareSpace();
+        $other_id = $this->createUser();
+
+        $created = $service->create(
+            $space->id,
+            $owner_id,
+            'invitado@example.test'
+        );
+
+        $this->expectException(DomainException::class);
+
+        $service->resend(
+            $created['invitation']->id,
+            $other_id
+        );
+    }
+
+    /**
+     * Una invitación revocada no puede reenviarse.
+     */
+    public function testCannotResendRevokedInvitation(): void {
+        [$service, $owner_id, $space] = $this->prepareSpace();
+
+        $created = $service->create(
+            $space->id,
+            $owner_id,
+            'invitado@example.test'
+        );
+
+        $invitation_id = $created['invitation']->id;
+
+        $service->revoke($invitation_id, $owner_id);
+
+        $this->expectException(LogicException::class);
+
+        $service->resend($invitation_id, $owner_id);
+    }
+
+    /**
+     * Una invitación caducada no puede reenviarse.
+     */
+    public function testCannotResendExpiredInvitation(): void {
+        [$service, $owner_id, $space] = $this->prepareSpace();
+
+        $created = $service->create(
+            $space->id,
+            $owner_id,
+            'invitado@example.test'
+        );
+
+        $invitation_id = $created['invitation']->id;
+
+        $stmt = $this->db->prepare(
+            'UPDATE `space_invitation`
+             SET expires_at = DATE_SUB(NOW(), INTERVAL 1 DAY)
+             WHERE id = ?'
+        );
+        $stmt->execute([$invitation_id]);
+
+        $this->expectException(LogicException::class);
+
+        $service->resend($invitation_id, $owner_id);
+    }
+
+    /**
+     * Una invitación aceptada no puede reenviarse.
+     */
+    public function testCannotResendAcceptedInvitation(): void {
+        [$service, $owner_id, $space] = $this->prepareSpace();
+
+        $created = $service->create(
+            $space->id,
+            $owner_id,
+            'invitado@example.test'
+        );
+
+        $invitation_id = $created['invitation']->id;
+
+        $stmt = $this->db->prepare(
+            'UPDATE `space_invitation`
+             SET accepted_at = NOW()
+             WHERE id = ?'
+        );
+        $stmt->execute([$invitation_id]);
+
+        $this->expectException(LogicException::class);
+
+        $service->resend($invitation_id, $owner_id);
+    }
+
+    /**
      * Prepara propietario, espacio y servicio.
      *
      * @return array{SpaceInvitationService, int, Space}
