@@ -6,6 +6,7 @@ use Throwable;
 use Osumi\OsumiFramework\App\Model\SpaceInvitation;
 use Osumi\OsumiFramework\App\Service\Email\InvitationEmailDeliveryService;
 use Osumi\OsumiFramework\Core\OService;
+use Osumi\OsumiFramework\Log\OLog;
 
 class SpaceInvitationNotificationService extends OService {
     /**
@@ -60,6 +61,7 @@ class SpaceInvitationNotificationService extends OService {
      */
     private function notify(array $result): array {
         $sent = false;
+        $invitation_id = (int) $result['invitation']->id;
 
         try {
             $settings = $this->getMailSettings();
@@ -72,12 +74,20 @@ class SpaceInvitationNotificationService extends OService {
                 $result['token'],
                 (string) $result['invitation']->expires_at
             );
+            if (!$sent) {
+                $this->logFailure(
+                    $invitation_id,
+                    'delivery_not_confirmed'
+                );
+            }
         }
-        catch (Throwable) {
-            // El correo no debe deshacer una invitación
-            // que ya se ha confirmado en MariaDB.
-            // No registrar aquí el token ni credenciales.
+        catch (Throwable $e) {
             $sent = false;
+
+            $this->logFailure(
+                $invitation_id,
+                'exception_' . $e::class
+            );
         }
 
         return [
@@ -85,6 +95,35 @@ class SpaceInvitationNotificationService extends OService {
             'token' => $result['token'],
             'email_sent' => $sent
         ];
+    }
+
+    /**
+     * Registra un fallo de notificación sin información sensible.
+     *
+     * @param int $invitation_id Identificador de invitación.
+     * @param string $reason Código interno del fallo.
+     * @return void
+     */
+    protected function logFailure(
+        int $invitation_id,
+        string $reason
+    ): void {
+        $entry = sprintf(
+            'invitation_email_failed invitation_id=%d reason=%s',
+            $invitation_id,
+            $reason
+        );
+
+        try {
+            $logger = new OLog('SpaceInvitationNotificationService');
+
+            if (!$logger->error($entry)) {
+                error_log($entry);
+            }
+        }
+        catch (Throwable) {
+            error_log($entry);
+        }
     }
 
     /**

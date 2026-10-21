@@ -254,6 +254,20 @@ final class SpaceInvitationNotificationServiceTest extends TestCase {
                     'frontend_url' => 'https://gastos.example.test'
                 ];
             }
+
+            /**
+             * Evita escribir logs reales en las pruebas unitarias.
+             *
+             * @param int $invitation_id Identificador de invitación.
+             * @param string $reason Código de diagnóstico.
+             * @return void
+             */
+            protected function logFailure(
+                int $invitation_id,
+                string $reason
+            ): void {
+                // Sin efectos externos.
+            }
         };
     }
 }

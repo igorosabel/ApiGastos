@@ -154,10 +154,58 @@ final class SmtpEmailServiceTest extends TestCase {
     }
 
     /**
+     * Clasifica un fallo SMTP sin registrar datos sensibles.
+     */
+    public function testClassifiesAuthenticationFailure(): void {
+        $mailer = $this->createStub(OEmailSMTP::class);
+
+        $mailer->method('send')->willReturn([
+            'status' => 'error',
+            'mens' => 'SMTP Error: Could not authenticate. secret@example.test'
+        ]);
+
+        $service = new class($mailer) extends SmtpEmailService {
+            /** @var list<string> */
+            public array $failure_codes = [];
+
+            /**
+             * @param OEmailSMTP $mailer Transporte simulado.
+             */
+            public function __construct(private OEmailSMTP $mailer) {}
+
+            /**
+             * @return OEmailSMTP Transporte.
+             */
+            protected function createMailer(): OEmailSMTP {
+                return $this->mailer;
+            }
+
+            /**
+             * @param string $reason Motivo.
+             * @return void
+             */
+            protected function logFailure(string $reason): void {
+                $this->failure_codes[] = $reason;
+            }
+        };
+
+        $this->assertFalse($service->send(
+            'avisos@example.test',
+            'invitado@example.test',
+            'Invitación',
+            '<p>Hola</p>'
+        ));
+
+        $this->assertSame(
+            ['authentication_failed'],
+            $service->failure_codes
+        );
+    }
+
+    /**
      * Construye el servicio con un transporte simulado.
      *
      * @param OEmailSMTP $mailer Cliente simulado.
-     *
      * @return SmtpEmailService Servicio bajo prueba.
      */
     private function makeService(
@@ -178,6 +226,16 @@ final class SmtpEmailServiceTest extends TestCase {
              */
             protected function createMailer(): OEmailSMTP {
                 return $this->mailer;
+            }
+
+            /**
+             * Evita escribir logs reales en los tests.
+             *
+             * @param string $reason Código de diagnóstico.
+             * @return void
+             */
+            protected function logFailure(string $reason): void {
+                // Sin efectos externos.
             }
         };
     }

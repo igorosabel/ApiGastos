@@ -26,6 +26,7 @@
       "pass": "smtp-password"
     }
   },
+  "mailing_from": "notificaciones@tu-dominio.es",
   "extra": {
     "jwt_secret": "value",
      "frontend_url": "https://gastos.example.com"

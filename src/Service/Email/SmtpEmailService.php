@@ -3,8 +3,10 @@
 namespace Osumi\OsumiFramework\App\Service\Email;
 
 use InvalidArgumentException;
+use Throwable;
 use Osumi\OsumiFramework\Core\OService;
 use Osumi\OsumiFramework\Plugins\OEmailSMTP;
+use Osumi\OsumiFramework\Log\OLog;
 
 class SmtpEmailService extends OService {
     /**
@@ -47,7 +49,7 @@ class SmtpEmailService extends OService {
 
         $result = $mailer->send();
 
-        return (
+        $sent = (
             is_array($result) &&
             ($result['status'] ?? null) === 'ok' &&
             in_array(
@@ -56,6 +58,88 @@ class SmtpEmailService extends OService {
                 true
             )
         );
+
+        if (!$sent) {
+            $this->logFailure($this->classifyFailure($result));
+        }
+
+        return $sent;
+    }
+
+    /**
+     * Clasifica un fallo sin incluir el mensaje bruto de SMTP.
+     *
+     * @param mixed $result Resultado del plugin.
+     * @return string Código seguro para diagnóstico.
+     */
+    private function classifyFailure(mixed $result): string {
+        if (!is_array($result)) {
+            return 'invalid_plugin_result';
+        }
+
+        if (($result['status'] ?? null) === 'ok') {
+            return 'recipient_not_confirmed';
+        }
+
+        $detail = $result['mens'] ?? '';
+        $message = is_string($detail)
+            ? strtolower($detail)
+            : '';
+
+        if (
+            str_contains($message, 'authenticat') ||
+            str_contains($message, '535 ')
+        ) {
+            return 'authentication_failed';
+        }
+
+        if (
+            str_contains($message, 'certificate') ||
+            str_contains($message, 'starttls') ||
+            str_contains($message, 'tls') ||
+            str_contains($message, 'ssl')
+        ) {
+            return 'tls_failed';
+        }
+
+        if (
+            str_contains($message, 'connect') ||
+            str_contains($message, 'timed out') ||
+            str_contains($message, 'connection refused')
+        ) {
+            return 'connection_failed';
+        }
+
+        if (
+            str_contains($message, 'recipient') ||
+            str_contains($message, 'relay') ||
+            str_contains($message, '550 ')
+        ) {
+            return 'recipient_or_relay_rejected';
+        }
+
+        return 'smtp_send_failed';
+    }
+
+    /**
+     * Registra únicamente una categoría segura.
+     *
+     * @param string $reason Motivo clasificado.
+     * @return void
+     */
+    protected function logFailure(string $reason): void {
+        $entry = 'smtp_invitation_failed reason=' . $reason;
+
+        try {
+            $logger = new OLog('SmtpEmailService');
+
+            if (!$logger->error($entry)) {
+                error_log($entry);
+            }
+        }
+        catch (Throwable) {
+            error_log($entry);
+        }
     }
 
     /**
